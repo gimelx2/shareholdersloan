@@ -2,7 +2,7 @@ from datetime import date
 import io
 import json
 import openpyxl
-from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.styles import Font, PatternFill
 import pandas as pd
 
 COLUMNS = [
@@ -88,22 +88,29 @@ def clean_input_data(df_tx, df_cpi, col_map, type_map):
   df_tx = df_tx.copy()
   df_cpi = df_cpi.copy()
 
-  df_cpi.columns = [str(col).strip() for col in df_cpi.columns]
+  # ניקוי עמודות df_cpi וזיהוי גמיש וחסין
+  df_cpi.columns = [str(col).strip().replace('\ufeff', '') for col in df_cpi.columns]
+
   cpi_month_col = [
-      col
-      for col in df_cpi.columns
-      if 'חודש' in str(col) or 'month' in str(col).lower()
+      col for col in df_cpi.columns
+      if 'חודש' in str(col) or 'month' in str(col).lower() or 'date' in str(col).lower() or 'תאריך' in str(col)
   ]
   if cpi_month_col:
     df_cpi = df_cpi.rename(columns={cpi_month_col[0]: 'חודש'})
+  else:
+    df_cpi = df_cpi.rename(columns={df_cpi.columns[0]: 'חודש'})
 
   cpi_val_col = [
-      col
-      for col in df_cpi.columns
-      if 'מדד' in str(col) or 'cpi' in str(col).lower()
+      col for col in df_cpi.columns
+      if 'מדד' in str(col) or 'cpi' in str(col).lower() or 'index' in str(col).lower() or 'val' in str(col).lower()
   ]
   if cpi_val_col:
     df_cpi = df_cpi.rename(columns={cpi_val_col[0]: 'מדד בגין'})
+  else:
+    if len(df_cpi.columns) >= 2:
+      df_cpi = df_cpi.rename(columns={df_cpi.columns[1]: 'מדד בגין'})
+    else:
+      raise ValueError("לא נמצאה עמודת מדד תקינה בקובץ המדדים cpi.csv")
 
   date_col = col_map.get('date')
   amt_col = col_map.get('amount')
@@ -206,8 +213,7 @@ def get_known_cpi(current_date, cpi_df):
   if not matched.empty:
     return matched['מדד בגין'].iloc[0]
   else:
-    last_available = cpi_df.iloc[-1]['מדד בגין']
-    return last_available
+    return float(cpi_df.iloc[-1]['מדד בגין'])
 
 
 def build_timeline(min_date, target_as_of_date, tx_dates):
@@ -336,7 +342,6 @@ def run_calculation_json(params_json):
   else:
     target_as_of_dt = date.today()
 
-  # סינון תנועות שמתרחשות לאחר תאריך הנכונות שנבחר
   df_tx = df_tx[df_tx['תאריך'] <= target_as_of_dt]
 
   tx_dates = set(pd.to_datetime(df_tx['תאריך']).dt.date)
@@ -353,7 +358,7 @@ def run_calculation_json(params_json):
     day_txs = df_tx[df_tx['תאריך'] == dt]
     days_from_prev = (dt - prev_timeline_dt).days if prev_timeline_dt else 0
 
-    # 1. צבירות לתקופה (לפני תזרימי היום)
+    # 1. צבירת ריבית והצמדה לתקופה (עד לתאריך החישוב הנוכחי)
     for t_id, t in tables.items():
       if dt <= t['last_dt']:
         continue
@@ -386,16 +391,22 @@ def run_calculation_json(params_json):
         t['last_dt'] = dt
         continue
 
+      # צבירת ריבית לא-מוצמדת לתקופה
       new_i = t['p'] * (((1.0 + r_daily) ** days) - 1.0)
       closing_i_unadjusted = t['i'] + new_i
 
+      # 1.1 הצמדת הקרן מיום בסיס השכבה (base_idx)
       base_idx = t['base_idx']
       cum_idx_factor = (idx / base_idx) - 1.0 if base_idx > 0 else 0.0
       target_adj_p_closing = t['p'] * cum_idx_factor
       new_adj_p = target_adj_p_closing - t['adj_p']
 
+      # 1.2 הצמדת הריבית לפי הנוסחה שנדרשה:
+      # א' - קידום יתרת הריבית הפתוחה (פתיחה + הצמדה) במדד הנוכחי חלקי המדד הקודם
       period_idx_factor = (idx / t['last_idx']) - 1.0 if t['last_idx'] > 0 else 0.0
       adj_existing_i = (t['i'] + t['adj_i']) * period_idx_factor
+
+      # ב' - הצמדת הריבית החדשה שנצברה בתקופה (new_i) מיום בסיס השכבה (base_idx)
       adj_new_i = new_i * cum_idx_factor
 
       new_adj_i = adj_existing_i + adj_new_i
@@ -429,7 +440,7 @@ def run_calculation_json(params_json):
       t['last_dt'] = dt
       t['last_idx'] = idx
 
-    # 2. הזרמת התזרימים היומיים
+    # 2. הזרמת התזרימים היומיים (משיכות / הפקדות)
     for _, tx in day_txs.iterrows():
       tx_type = str(tx['סוג תנועה']).strip()
       amt = abs(float(tx['סכום']))
@@ -635,12 +646,11 @@ def run_calculation_json(params_json):
       + last['הפרשי הצמדה ריבית יתרת סגירה']
   )
 
-  # יצירת קובץ Excel מעוצב הכולל גיליון הנחות והסברים מקיף
+  # יצירת קובץ Excel מעוצב
   output_path = 'output_results.xlsx'
   wb = openpyxl.Workbook()
-  wb.remove(wb.active)  # הסרת הגיליון הדיפולטי
+  wb.remove(wb.active)
 
-  # 1. יצירת גיליון "עקרונות והנחות חישוב"
   ws_info = wb.create_sheet(title='עקרונות והנחות חישוב')
   ws_info.sheet_view.rightToLeft = True
 
@@ -680,8 +690,8 @@ def run_calculation_json(params_json):
       ),
       (
           '2. סדר קדימות הפירעון (Waterfall):',
-          'סילוקים/תזרימים מנוכים לפי הסדר הבא: ריבית נצברת -> הפרשי הצמדה'
-          ' ריבית -> הפרשי הצמדה קרן -> קרן.',
+          'סילוקים מנוכים לפי הסדר הבא: ריבית נצברת -> הפרשי הצמדה ריבית ->'
+          ' הפרשי הצמדה קרן -> קרן.',
       ),
       (
           '3. מנוע ההצמדה למדד (CPI):',
@@ -701,7 +711,6 @@ def run_calculation_json(params_json):
     if isinstance(v, float):
       cell_v.number_format = '#,##0.00'
 
-  # הוספת טבלת תזרימי הקלט שהועלו לגיליון ההסברים
   start_tx_row = len(info_rows) + 5
   ws_info.cell(row=start_tx_row, column=1, value='פירוט נתוני התזרים שהועלו ונבדקו:').font = title_font
 
@@ -717,7 +726,6 @@ def run_calculation_json(params_json):
     c3 = ws_info.cell(row=r_offset, column=3, value=float(row_tx['סכום']))
     c3.number_format = '#,##0.00'
 
-  # 2. הוספת גיליון טבלה מאוחדת וגיליונות השכבות
   ws_main = wb.create_sheet(title='טבלה מאוחדת')
   ws_main.sheet_view.rightToLeft = True
 
@@ -762,7 +770,6 @@ def run_calculation_json(params_json):
         else:
           cell.number_format = '#,##0.00'
 
-  # עיצוב רוחב עמודות אוטומטי לכל הגיליונות
   for ws in wb.worksheets:
     ws.freeze_panes = 'A2' if ws.title == 'עקרונות והנחות חישוב' else 'B2'
     for col in ws.columns:
