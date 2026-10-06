@@ -17,6 +17,7 @@
             <span>טוען מנוע Python וספריות חישוב בדפדפן... אנא המתן.</span>
         </div>
 
+        <!-- הגדרות בסיסיות -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
             <div>
                 <label class="block font-medium text-slate-700 mb-1">שיעור ריבית שנתית (%)</label>
@@ -40,7 +41,39 @@
             </div>
             <div>
                 <label class="block font-medium text-slate-700 mb-1">קובץ תזרים (CSV / Excel)</label>
-                <input type="file" id="cf_file" accept=".csv" class="w-full border border-slate-300 rounded-lg p-2 bg-white">
+                <input type="file" id="cf_file" accept=".csv" onchange="handleFileSelect()" class="w-full border border-slate-300 rounded-lg p-2 bg-white">
+            </div>
+        </div>
+
+        <!-- סקציית מיפוי עמודות דינמית (נפתחת רק לאחר העלאת קובץ) -->
+        <div id="mapping_section" class="hidden bg-slate-50 border border-slate-200 rounded-lg p-5 mb-6">
+            <h3 class="font-bold text-slate-800 text-lg mb-3">🛠 מיפוי עמודות וסוגי תנועה בקובץ</h3>
+            <p class="text-xs text-slate-500 mb-4">הערכים זוהו אוטומטית. באפשרותך להתאים את המיפוי במידת הצורך:</p>
+            
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">עמודת תאריך</label>
+                    <select id="map_date" class="w-full border border-slate-300 rounded p-2 text-sm bg-white"></select>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">עמודת סכום</label>
+                    <select id="map_amount" class="w-full border border-slate-300 rounded p-2 text-sm bg-white"></select>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">עמודת סוג תנועה</label>
+                    <select id="map_type" onchange="updateTypeValuesMapping()" class="w-full border border-slate-300 rounded p-2 text-sm bg-white"></select>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 border-t border-slate-200 pt-3">
+                <div>
+                    <label class="block text-xs font-semibold text-emerald-700 mb-1">ערך המייצג 'הפקדה'</label>
+                    <select id="map_val_deposit" class="w-full border border-slate-300 rounded p-2 text-sm bg-white"></select>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-rose-700 mb-1">ערך המייצג 'משיכה/סילוק'</label>
+                    <select id="map_val_withdraw" class="w-full border border-slate-300 rounded p-2 text-sm bg-white"></select>
+                </div>
             </div>
         </div>
 
@@ -60,6 +93,8 @@
 
     <script>
         let pyodide;
+        let currentFileBytes = null;
+        let currentFileName = "";
 
         async function initPyodide() {
             try {
@@ -86,11 +121,7 @@
                 }
 
                 document.getElementById('status').className = "bg-emerald-50 text-emerald-800 p-4 rounded-lg mb-6 flex items-center gap-3";
-                document.getElementById('status').innerHTML = "<span>✓</span><span>מנוע החישוב וספריות ה-Excel מוכנים לפעולה!</span>";
-                
-                const btn = document.getElementById('run_btn');
-                btn.disabled = false;
-                btn.className = "w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg shadow cursor-pointer transition";
+                document.getElementById('status').innerHTML = "<span>✓</span><span>מנוע החישוב מוכן לפעולה! אנא העלה קובץ תזרים.</span>";
 
             } catch (err) {
                 console.error("שגיאה בטעינת המערכת:", err);
@@ -101,23 +132,87 @@
 
         initPyodide();
 
-        async function calculate() {
+        async function handleFileSelect() {
             const fileInput = document.getElementById('cf_file');
-            if (!fileInput.files[0]) {
-                alert("אנא בחר קובץ תזרימים להעלאה");
-                return;
-            }
+            if (!fileInput.files[0]) return;
 
-            const uploadedFile = fileInput.files[0];
-            const fileName = uploadedFile.name;
-            
-            // קריאת הקובץ כ-ArrayBuffer של בייטס ישירים למניעת עיוותי עברית
-            const buffer = await uploadedFile.arrayBuffer();
-            pyodide.FS.writeFile(fileName, new Uint8Array(buffer));
+            const file = fileInput.files[0];
+            currentFileName = file.name;
+            const buffer = await file.arrayBuffer();
+            currentFileBytes = new Uint8Array(buffer);
+            pyodide.FS.writeFile(currentFileName, currentFileBytes);
 
+            // חילוץ עמודות אוטומטי מתוך ה-Python
+            const pyScript = `
+import pandas as pd
+df_temp, cols = extract_file_metadata(raw_data_bytes)
+cols_list = list(cols)
+`;
+            pyodide.globals.set("raw_data_bytes", currentFileBytes);
+            pyodide.runPython(pyScript);
+
+            const cols = pyodide.globals.get("cols_list").toJs();
+
+            // אכלוס תפריטי הבחירה
+            populateSelect('map_date', cols, ['תאריך', 'date']);
+            populateSelect('map_amount', cols, ['סכום', 'sum', 'amount']);
+            populateSelect('map_type', cols, ['סוג תנועה', 'סוג', 'sug', 'type']);
+
+            updateTypeValuesMapping();
+
+            document.getElementById('mapping_section').classList.remove('hidden');
+            const btn = document.getElementById('run_btn');
+            btn.disabled = false;
+            btn.className = "w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg shadow cursor-pointer transition";
+        }
+
+        function populateSelect(elemId, items, preferredKeywords = []) {
+            const select = document.getElementById(elemId);
+            select.innerHTML = '';
+            let selectedIdx = 0;
+
+            items.forEach((item, idx) => {
+                const opt = document.createElement('option');
+                opt.value = item;
+                opt.textContent = item;
+                select.appendChild(opt);
+
+                if (preferredKeywords.some(kw => item.toLowerCase().includes(kw.toLowerCase()))) {
+                    selectedIdx = idx;
+                }
+            });
+
+            select.selectedIndex = selectedIdx;
+        }
+
+        function updateTypeValuesMapping() {
+            const selectedTypeCol = document.getElementById('map_type').value;
+
+            const pyScript = `
+type_vals = list(df_temp['${selectedTypeCol}'].astype(str).str.strip().unique())
+`;
+            pyodide.runPython(pyScript);
+            const uniqueVals = pyodide.globals.get("type_vals").toJs();
+
+            populateSelect('map_val_deposit', uniqueVals, ['הפקדה', 'deposit']);
+            populateSelect('map_val_withdraw', uniqueVals, ['משיכה', 'sug', 'withdraw']);
+        }
+
+        async function calculate() {
             const rate = document.getElementById('annual_rate').value;
             const freq = document.getElementById('compounding_freq').value;
             const method = document.getElementById('method').value;
+
+            const colMap = {
+                date: document.getElementById('map_date').value,
+                amount: document.getElementById('map_amount').value,
+                type: document.getElementById('map_type').value
+            };
+
+            const typeMap = {
+                deposit: document.getElementById('map_val_deposit').value,
+                withdraw: document.getElementById('map_val_withdraw').value
+            };
 
             const script = `
 import pandas as pd
@@ -125,15 +220,23 @@ import io
 import openpyxl
 from openpyxl.styles import Alignment
 
-# קריאת בייטס מהקובץ הווירטואלי
-with open("${fileName}", "rb") as f:
-    raw_tx_bytes = f.read()
+col_map = {
+    'date': '${colMap.date}',
+    'amount': '${colMap.amount}',
+    'type': '${colMap.type}'
+}
+
+type_map = {
+    'deposit': '${typeMap.deposit}',
+    'withdraw': '${typeMap.withdraw}'
+}
 
 with open("cpi.csv", "rb") as f:
     raw_cpi_bytes = f.read()
 
 history, tables = run_full_calculation(
-    raw_tx_bytes, raw_cpi_bytes, 
+    raw_data_bytes, raw_cpi_bytes, 
+    col_map, type_map,
     annual_rate=${rate}, 
     compounding_freq='${freq}', 
     method='${method}'
