@@ -1,5 +1,6 @@
 from datetime import date
 import io
+import json
 import openpyxl
 from openpyxl.styles import Alignment
 import pandas as pd
@@ -26,54 +27,82 @@ COLUMNS = [
     'הפרשי הצמדה ריבית יתרת סגירה',
 ]
 
+CURRENT_DF_TEMP = None
 
-def load_df_with_correct_encoding(file_input):
-  """טוענת CSV או Bytes ומנסה את כל קידודי העברית והאירופאים הנפוצים."""
-  if isinstance(file_input, pd.DataFrame):
-    return file_input
 
-  raw_data = (
-      file_input if isinstance(file_input, bytes) else file_input.encode()
-  )
-  encodings_to_try = ['utf-8-sig', 'cp1255', 'iso-8859-8', 'utf-8']
+def load_df_from_file(file_source):
+  """טוענת קובץ מנתיב/בייטס ומנסה את כל קידודי העברית והמפרידים הנפוצים."""
+  if isinstance(file_source, pd.DataFrame):
+    return file_source
 
-  for enc in encodings_to_try:
-    try:
-      df = pd.read_csv(
-          io.BytesIO(raw_data), sep=None, engine='python', encoding=enc
-      )
-      if not df.empty and len(df.columns) >= 2:
-        return df
-    except Exception:
-      continue
+  if isinstance(file_source, str):
+    with open(file_source, 'rb') as f:
+      raw_bytes = f.read()
+  elif isinstance(file_source, bytes):
+    raw_bytes = file_source
+  elif hasattr(file_source, 'to_py'):
+    raw_bytes = bytes(file_source.to_py())
+  elif isinstance(file_source, (memoryview, bytearray)):
+    raw_bytes = bytes(file_source)
+  else:
+    raw_bytes = bytes(file_source)
+
+  encodings = ['utf-8-sig', 'cp1255', 'iso-8859-8', 'utf-8', 'latin1']
+  separators = [None, ',', '\t', ';']
+
+  for enc in encodings:
+    for sep in separators:
+      try:
+        df = pd.read_csv(
+            io.BytesIO(raw_bytes), sep=sep, engine='python', encoding=enc
+        )
+        if not df.empty and len(df.columns) >= 1:
+          cleaned_cols = []
+          for col in df.columns:
+            c_str = str(col).strip()
+            if c_str.startswith('\ufeff'):
+              c_str = c_str[1:]
+            cleaned_cols.append(c_str)
+          df.columns = cleaned_cols
+          return df
+      except Exception:
+        continue
 
   return pd.read_csv(
-      io.BytesIO(raw_data), sep=None, engine='python', encoding='iso-8859-8'
+      io.BytesIO(raw_bytes), sep=None, engine='python', encoding='iso-8859-8'
   )
 
 
-def extract_file_metadata(file_bytes):
-  """פונקציית עזר להחזרת כותרות העמודות והערכים הייחודיים בסוג התנועה."""
-  df = load_df_with_correct_encoding(file_bytes)
-  cols = [str(c).strip() for c in df.columns]
+def extract_file_metadata_from_file(file_path):
+  """חילוץ כותרות עמודות לצורך הממשק הדינמי."""
+  global CURRENT_DF_TEMP
+  CURRENT_DF_TEMP = load_df_from_file(file_path)
+  cols = [str(c).strip() for c in CURRENT_DF_TEMP.columns]
+  return CURRENT_DF_TEMP, cols
 
-  # ניקוי שמות עמודות מ-BOM
-  cleaned_cols = []
-  for c in cols:
-    try:
-      cleaned_cols.append(
-          c.encode('utf-8', errors='ignore').decode('utf-8-sig').strip()
-      )
-    except Exception:
-      cleaned_cols.append(c)
 
-  df.columns = cleaned_cols
-  return df, cleaned_cols
+def get_unique_type_values(col_name):
+  """חילוץ ערכים ייחודיים מעמודת סוג התנועה."""
+  global CURRENT_DF_TEMP
+  if CURRENT_DF_TEMP is None or col_name not in CURRENT_DF_TEMP.columns:
+    return []
+  vals = (
+      CURRENT_DF_TEMP[col_name]
+      .dropna()
+      .astype(str)
+      .str.strip()
+      .unique()
+      .tolist()
+  )
+  return [v for v in vals if v]
 
 
 def clean_input_data(df_tx, df_cpi, col_map, type_map):
-  """מנרמלת את הנתונים לפי המיפוי הדינמי שהתקבל מהמשתמש."""
-  # 1. ניקוי עמודת CPI
+  """מנרמלת את הנתונים לפי המיפוי שהתקבל מהממשק."""
+  df_tx = df_tx.copy()
+  df_cpi = df_cpi.copy()
+
+  # ניקוי CPI
   df_cpi.columns = [str(col).strip() for col in df_cpi.columns]
   cpi_month_col = [
       col
@@ -91,7 +120,7 @@ def clean_input_data(df_tx, df_cpi, col_map, type_map):
   if cpi_val_col:
     df_cpi = df_cpi.rename(columns={cpi_val_col[0]: 'מדד בגין'})
 
-  # 2. שינוי שמות עמודות התזרים לפי המפה שהתקבלה מהממשק
+  # מיפוי עמודות תזרים
   df_tx = df_tx.rename(
       columns={
           col_map['date']: 'תאריך',
@@ -100,22 +129,28 @@ def clean_input_data(df_tx, df_cpi, col_map, type_map):
       }
   )
 
-  # 3. נרמול ערכי סוג התנועה
-  def normalize_type(val):
-    val_str = str(val).strip()
-    if val_str == type_map.get('deposit'):
+  dep_val = str(type_map.get('deposit', '')).strip()
+  wth_val = str(type_map.get('withdraw', '')).strip()
+
+  def map_sug(val):
+    s_val = str(val).strip()
+    if s_val == dep_val:
       return 'הפקדה'
-    elif val_str == type_map.get('withdraw'):
+    elif s_val == wth_val:
       return 'משיכה'
-    return val_str
+    if 'הפקדה' in s_val or 'deposit' in s_val.lower():
+      return 'הפקדה'
+    if 'משיכה' in s_val or 'withdraw' in s_val.lower():
+      return 'משיכה'
+    return s_val
 
-  df_tx['סוג תנועה'] = df_tx['סוג תנועה'].apply(normalize_type)
+  df_tx['סוג תנועה'] = df_tx['סוג תנועה'].apply(map_sug)
 
-  # 4. המרת תאריכים
+  # המרת תאריכים
   df_tx['תאריך'] = pd.to_datetime(df_tx['תאריך'], dayfirst=True).dt.date
   df_cpi['חודש'] = pd.to_datetime(df_cpi['חודש'], dayfirst=True).dt.date
 
-  # 5. המרת סכומים ומדדים
+  # המרת סכומים ומדדים
   if df_tx['סכום'].dtype == 'object':
     df_tx['סכום'] = (
         df_tx['סכום'].astype(str).str.replace(',', '').astype(float)
@@ -253,8 +288,8 @@ def allocate_waterfall(df_summary, pmt_amount, method='FIFO'):
 
 
 def run_full_calculation(
-    df_tx_input,
-    df_cpi_input,
+    tx_file_path,
+    cpi_file_path,
     col_map,
     type_map,
     annual_rate=6.0,
@@ -271,8 +306,8 @@ def run_full_calculation(
   elif compounding_freq == 'שנתית':
     r_daily = ((1.0 + r) ** (1.0 / 365.0)) - 1.0
 
-  df_tx = load_df_with_correct_encoding(df_tx_input)
-  df_cpi = load_df_with_correct_encoding(df_cpi_input)
+  df_tx = load_df_from_file(tx_file_path)
+  df_cpi = load_df_from_file(cpi_file_path)
 
   df_tx, df_cpi = clean_input_data(df_tx, df_cpi, col_map, type_map)
 
