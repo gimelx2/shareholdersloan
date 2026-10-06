@@ -14,7 +14,7 @@
 
         <div id="status" class="bg-blue-50 text-blue-800 p-4 rounded-lg mb-6 flex items-center gap-3">
             <span class="animate-spin text-xl">⏳</span>
-            <span>טוען מנוע Python וספריות חישוב בדפדפן... אנא המתן.</span>
+            <span>טוען מנוע Python וספריות חישוב בדפדפן... אנא המתן. אורך כשלוש דקות</span>
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
@@ -39,7 +39,7 @@
                 </select>
             </div>
             <div>
-                <label class="block font-medium text-slate-700 mb-1">קובץ תזרים (cf.csv)</label>
+                <label class="block font-medium text-slate-700 mb-1">קובץ תזרים (CSV / Excel)</label>
                 <input type="file" id="cf_file" accept=".csv" class="w-full border border-slate-300 rounded-lg p-2 bg-white">
             </div>
         </div>
@@ -63,15 +63,12 @@
 
         async function initPyodide() {
             try {
-                // 1. טעינת Pyodide בסיסי
                 pyodide = await loadPyodide();
 
-                // 2. טעינת micropip והתקנת pandas ו-openpyxl דרכו
                 await pyodide.loadPackage("micropip");
                 const micropip = pyodide.pyimport("micropip");
                 await micropip.install(['pandas', 'openpyxl']);
 
-                // 3. טעינת engine.py
                 const response = await fetch('engine.py');
                 if (!response.ok) {
                     throw new Error("לא ניתן למצוא את הקובץ engine.py ברפוזיטורי");
@@ -79,7 +76,6 @@
                 const code = await response.text();
                 pyodide.runPython(code);
 
-                // 4. טעינת cpi.csv (תמיכה בתיקייה ראשית ובתיקיית data)
                 let cpiResp = await fetch('data/cpi.csv');
                 if (!cpiResp.ok) {
                     cpiResp = await fetch('cpi.csv');
@@ -91,7 +87,6 @@
                     console.warn("קובץ cpi.csv לא נמצא, תתאפשר טעינה ידנית בעת הצורך");
                 }
 
-                // עדכון הממשק שהטעינה הושלמה בהצלחה
                 document.getElementById('status').className = "bg-emerald-50 text-emerald-800 p-4 rounded-lg mb-6 flex items-center gap-3";
                 document.getElementById('status').innerHTML = "<span>✓</span><span>מנוע החישוב וספריות ה-Excel מוכנים לפעולה!</span>";
                 
@@ -111,12 +106,15 @@
         async function calculate() {
             const fileInput = document.getElementById('cf_file');
             if (!fileInput.files[0]) {
-                alert("אנא בחר קובץ cf.csv לתזרימים");
+                alert("אנא בחר קובץ תזרימים להעלאה");
                 return;
             }
 
-            const cfText = await fileInput.files[0].text();
-            pyodide.FS.writeFile("cf.csv", cfText);
+            const uploadedFile = fileInput.files[0];
+            const fileName = uploadedFile.name;
+            const cfText = await uploadedFile.text();
+
+            pyodide.FS.writeFile(fileName, cfText);
 
             const rate = document.getElementById('annual_rate').value;
             const freq = document.getElementById('compounding_freq').value;
@@ -129,14 +127,14 @@ import openpyxl
 from openpyxl.styles import Alignment
 
 try:
-    df_tx = pd.read_csv("cf.csv", encoding="iso-8859-8")
+    df_tx = pd.read_csv("${fileName}", sep=None, engine="python", encoding="utf-8-sig")
 except:
-    df_tx = pd.read_csv("cf.csv", encoding="utf-8")
+    df_tx = pd.read_csv("${fileName}", sep=None, engine="python", encoding="iso-8859-8")
 
 try:
-    df_cpi = pd.read_csv("cpi.csv", encoding="iso-8859-8")
+    df_cpi = pd.read_csv("cpi.csv", sep=None, engine="python", encoding="utf-8-sig")
 except:
-    df_cpi = pd.read_csv("cpi.csv", encoding="utf-8")
+    df_cpi = pd.read_csv("cpi.csv", sep=None, engine="python", encoding="iso-8859-8")
 
 history, tables = run_full_calculation(
     df_tx, df_cpi, 
@@ -204,7 +202,7 @@ res_summary = {
                 document.getElementById('result_area').classList.remove('hidden');
             } catch (err) {
                 console.error("שגיאה בהרצת החישוב:", err);
-                alert("אירעה שגיאה בביצוע החישוב. ודא שקובץ התזרימים תקין ומכיל את העמודות הנדרשות.");
+                alert("אירעה שגיאה בביצוע החישוב: " + err.message);
             }
         }
     </script>
