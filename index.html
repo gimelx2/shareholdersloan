@@ -17,7 +17,6 @@
             <span>טוען מנוע Python וספריות חישוב בדפדפן... אנא המתן.</span>
         </div>
 
-        <!-- הגדרות בסיסיות -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
             <div>
                 <label class="block font-medium text-slate-700 mb-1">שיעור ריבית שנתית (%)</label>
@@ -45,7 +44,7 @@
             </div>
         </div>
 
-        <!-- סקציית מיפוי עמודות דינמית (נפתחת רק לאחר העלאת קובץ) -->
+        <!-- סקציית מיפוי עמודות דינמית -->
         <div id="mapping_section" class="hidden bg-slate-50 border border-slate-200 rounded-lg p-5 mb-6">
             <h3 class="font-bold text-slate-800 text-lg mb-3">🛠 מיפוי עמודות וסוגי תנועה בקובץ</h3>
             <p class="text-xs text-slate-500 mb-4">הערכים זוהו אוטומטית. באפשרותך להתאים את המיפוי במידת הצורך:</p>
@@ -93,8 +92,6 @@
 
     <script>
         let pyodide;
-        let currentFileBytes = null;
-        let currentFileName = "";
 
         async function initPyodide() {
             try {
@@ -137,23 +134,18 @@
             if (!fileInput.files[0]) return;
 
             const file = fileInput.files[0];
-            currentFileName = file.name;
             const buffer = await file.arrayBuffer();
-            currentFileBytes = new Uint8Array(buffer);
-            pyodide.FS.writeFile(currentFileName, currentFileBytes);
+            
+            // כתיבת הקובץ למערכת הקבצים הווירטואלית בשם קבוע כדי למנוע בעיות מעבר אובייקטים
+            pyodide.FS.writeFile("uploaded_tx.csv", new Uint8Array(buffer));
 
-            // חילוץ עמודות אוטומטי מתוך ה-Python
             const pyScript = `
-import pandas as pd
-df_temp, cols = extract_file_metadata(raw_data_bytes)
-cols_list = list(cols)
+df_temp, cols_list = extract_file_metadata_from_file("uploaded_tx.csv")
 `;
-            pyodide.globals.set("raw_data_bytes", currentFileBytes);
             pyodide.runPython(pyScript);
 
             const cols = pyodide.globals.get("cols_list").toJs();
 
-            // אכלוס תפריטי הבחירה
             populateSelect('map_date', cols, ['תאריך', 'date']);
             populateSelect('map_amount', cols, ['סכום', 'sum', 'amount']);
             populateSelect('map_type', cols, ['סוג תנועה', 'סוג', 'sug', 'type']);
@@ -187,15 +179,13 @@ cols_list = list(cols)
 
         function updateTypeValuesMapping() {
             const selectedTypeCol = document.getElementById('map_type').value;
+            pyodide.globals.set("selected_type_col", selectedTypeCol);
 
-            const pyScript = `
-type_vals = list(df_temp['${selectedTypeCol}'].astype(str).str.strip().unique())
-`;
-            pyodide.runPython(pyScript);
+            pyodide.runPython(`type_vals = get_unique_type_values(selected_type_col)`);
             const uniqueVals = pyodide.globals.get("type_vals").toJs();
 
             populateSelect('map_val_deposit', uniqueVals, ['הפקדה', 'deposit']);
-            populateSelect('map_val_withdraw', uniqueVals, ['משיכה', 'sug', 'withdraw']);
+            populateSelect('map_val_withdraw', uniqueVals, ['משיכה', 'withdraw', 'sug']);
         }
 
         async function calculate() {
@@ -214,32 +204,30 @@ type_vals = list(df_temp['${selectedTypeCol}'].astype(str).str.strip().unique())
                 withdraw: document.getElementById('map_val_withdraw').value
             };
 
+            pyodide.globals.set("js_annual_rate", parseFloat(rate));
+            pyodide.globals.set("js_compounding_freq", freq);
+            pyodide.globals.set("js_method", method);
+            pyodide.globals.set("js_col_map_json", JSON.stringify(colMap));
+            pyodide.globals.set("js_type_map_json", JSON.stringify(typeMap));
+
             const script = `
+import json
 import pandas as pd
 import io
 import openpyxl
 from openpyxl.styles import Alignment
 
-col_map = {
-    'date': '${colMap.date}',
-    'amount': '${colMap.amount}',
-    'type': '${colMap.type}'
-}
-
-type_map = {
-    'deposit': '${typeMap.deposit}',
-    'withdraw': '${typeMap.withdraw}'
-}
-
-with open("cpi.csv", "rb") as f:
-    raw_cpi_bytes = f.read()
+col_map = json.loads(js_col_map_json)
+type_map = json.loads(js_type_map_json)
 
 history, tables = run_full_calculation(
-    raw_data_bytes, raw_cpi_bytes, 
-    col_map, type_map,
-    annual_rate=${rate}, 
-    compounding_freq='${freq}', 
-    method='${method}'
+    "uploaded_tx.csv", 
+    "cpi.csv", 
+    col_map, 
+    type_map,
+    annual_rate=js_annual_rate, 
+    compounding_freq=js_compounding_freq, 
+    method=js_method
 )
 
 last = history[-1]
@@ -273,10 +261,10 @@ wb.save(final_out)
 excel_bytes = final_out.getvalue()
 
 res_summary = {
-    'p': last['קרן יתרת סגירה'],
-    'i': last['ריבית יתרת סגירה'],
-    'adj': last['הפרשי הצמדה קרן יתרת סגירה'] + last['הפרשי הצמדה ריבית יתרת סגירה'],
-    'tot': tot_debt
+    'p': float(last['קרן יתרת סגירה']),
+    'i': float(last['ריבית יתרת סגירה']),
+    'adj': float(last['הפרשי הצמדה קרן יתרת סגירה'] + last['הפרשי הצמדה ריבית יתרת סגירה']),
+    'tot': float(tot_debt)
 }
 `;
             try {
