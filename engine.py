@@ -88,7 +88,6 @@ def clean_input_data(df_tx, df_cpi, col_map, type_map):
   df_tx = df_tx.copy()
   df_cpi = df_cpi.copy()
 
-  # ניקוי עמודות df_cpi וזיהוי גמיש וחסין
   df_cpi.columns = [str(col).strip().replace('\ufeff', '') for col in df_cpi.columns]
 
   cpi_month_col = [
@@ -217,26 +216,14 @@ def get_known_cpi(current_date, cpi_df):
 
 
 def build_timeline(min_date, target_as_of_date, tx_dates):
-  min_dt = pd.to_datetime(min_date)
-  max_dt = pd.to_datetime(target_as_of_date)
+  """בונה ציר זמן יעיל הכולל אך ורק את ימי התזרים בפועל ואת תאריך הנכונות."""
+  min_dt = pd.to_datetime(min_date).date()
+  max_dt = pd.to_datetime(target_as_of_date).date()
 
-  first_of_months = pd.date_range(
-      start=min_dt.replace(day=1), end=max_dt.replace(day=1), freq='MS'
-  )
+  all_dates = set([d for d in tx_dates if min_dt <= d <= max_dt])
+  all_dates.add(max_dt)
 
-  month_ends = set(
-      first_of_months.map(lambda d: d.replace(day=d.days_in_month)).date
-  )
-
-  all_dates = set(
-      [d for d in tx_dates if d <= max_dt.date()]
-  ).union(month_ends)
-  all_dates.add(max_dt.date())
-
-  timeline = sorted(
-      [d for d in all_dates if d >= min_dt.date() and d <= max_dt.date()]
-  )
-
+  timeline = sorted(list(all_dates))
   return timeline
 
 
@@ -358,7 +345,7 @@ def run_calculation_json(params_json):
     day_txs = df_tx[df_tx['תאריך'] == dt]
     days_from_prev = (dt - prev_timeline_dt).days if prev_timeline_dt else 0
 
-    # 1. צבירת ריבית והצמדה לתקופה (עד לתאריך החישוב הנוכחי)
+    # 1. צבירות לתקופה (לפני תזרימי היום)
     for t_id, t in tables.items():
       if dt <= t['last_dt']:
         continue
@@ -391,7 +378,7 @@ def run_calculation_json(params_json):
         t['last_dt'] = dt
         continue
 
-      # צבירת ריבית לא-מוצמדת לתקופה
+      # צבירת ריבית לא-מוצמדת
       new_i = t['p'] * (((1.0 + r_daily) ** days) - 1.0)
       closing_i_unadjusted = t['i'] + new_i
 
@@ -401,12 +388,12 @@ def run_calculation_json(params_json):
       target_adj_p_closing = t['p'] * cum_idx_factor
       new_adj_p = target_adj_p_closing - t['adj_p']
 
-      # 1.2 הצמדת הריבית לפי הנוסחה שנדרשה:
-      # א' - קידום יתרת הריבית הפתוחה (פתיחה + הצמדה) במדד הנוכחי חלקי המדד הקודם
+      # 1.2 הצמדת הריבית (שרשור מדדים תקופתי + הצמדת הריבית החדשה):
+      # א' - קידום יתרת הריבית הקיימת הצמודה (i + adj_i) בשינוי המדד של התקופה הנוכחית בלבד!
       period_idx_factor = (idx / t['last_idx']) - 1.0 if t['last_idx'] > 0 else 0.0
       adj_existing_i = (t['i'] + t['adj_i']) * period_idx_factor
 
-      # ב' - הצמדת הריבית החדשה שנצברה בתקופה (new_i) מיום בסיס השכבה (base_idx)
+      # ב' - הצמדת הריבית החדשה שנצברה בתקופה (new_i) מיום בסיס השכבה המקורי
       adj_new_i = new_i * cum_idx_factor
 
       new_adj_i = adj_existing_i + adj_new_i
@@ -695,8 +682,9 @@ def run_calculation_json(params_json):
       ),
       (
           '3. מנוע ההצמדה למדד (CPI):',
-          'ההצמדה מחושבת על בסיס מדד המחירים לצרכן הידוע לכל תאריך. הצמדת הקרן'
-          ' והריבית מתעדכנות באופן מצטבר מיום יצירת השכבה/הסילוק האחרון.',
+          'ההצמדה מחושבת על בסיס מדד המחירים לצרכן הידוע. הצמדת הקרן מחושבת'
+          ' מיום הבסיס/הסילוק האחרון, והצמדת הריבית מורכבת מקידום תקופתי של'
+          ' היתרה הצמודה + הצמדת הריבית החדשה שנצברה.',
       ),
       (
           '4. משיכות יתר (Overdraft):',
@@ -721,8 +709,8 @@ def run_calculation_json(params_json):
     cell.font = header_font
 
   for r_offset, (_, row_tx) in enumerate(df_tx.iterrows(), start=start_tx_row + 2):
-    c1 = ws_info.cell(row=r_offset, column=1, value=pd.to_datetime(row_tx['תאריך']).strftime('%Y-%m-%d'))
-    c2 = ws_info.cell(row=r_offset, column=2, value=str(row_tx['סוג תנועה']))
+    ws_info.cell(row=r_offset, column=1, value=pd.to_datetime(row_tx['תאריך']).strftime('%Y-%m-%d'))
+    ws_info.cell(row=r_offset, column=2, value=str(row_tx['סוג תנועה']))
     c3 = ws_info.cell(row=r_offset, column=3, value=float(row_tx['סכום']))
     c3.number_format = '#,##0.00'
 
