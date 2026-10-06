@@ -27,14 +27,50 @@ COLUMNS = [
 ]
 
 
+def load_df_with_correct_encoding(file_input):
+  """טוענת CSV או Bytes ומנסה את כל קידודי העברית הנפוצים."""
+  if isinstance(file_input, pd.DataFrame):
+    return file_input
+
+  # אם קיבלנו בייטס (Bytes)
+  raw_data = (
+      file_input if isinstance(file_input, bytes) else file_input.encode()
+  )
+
+  encodings_to_try = ['utf-8-sig', 'cp1255', 'iso-8859-8', 'utf-8']
+  df = None
+
+  for enc in encodings_to_try:
+    try:
+      df = pd.read_csv(
+          io.BytesIO(raw_data), sep=None, engine='python', encoding=enc
+      )
+      # בדיקה האם פוענחה עברית תקינה באחת הכותרות
+      headers_str = ''.join([str(c) for c in df.columns])
+      if any('\u0590' <= char <= '\u05ff' for char in headers_str) or any(
+          k in headers_str for k in ['date', 'sug', 'sum']
+      ):
+        break
+    except Exception:
+      continue
+
+  if df is None:
+    # ניסיון ברירת מחדל אחרון
+    df = pd.read_csv(
+        io.BytesIO(raw_data), sep=None, engine='python', encoding='iso-8859-8'
+    )
+
+  return df
+
+
 def clean_input_data(df_tx, df_cpi):
   # 1. ניקוי תווי BOM נסתרים ורווחים משמות העמודות
   df_tx.columns = [
-      str(col).encode('utf-8').decode('utf-8-sig').strip()
+      str(col).encode('utf-8', errors='ignore').decode('utf-8-sig').strip()
       for col in df_tx.columns
   ]
   df_cpi.columns = [
-      str(col).encode('utf-8').decode('utf-8-sig').strip()
+      str(col).encode('utf-8', errors='ignore').decode('utf-8-sig').strip()
       for col in df_cpi.columns
   ]
 
@@ -46,18 +82,9 @@ def clean_input_data(df_tx, df_cpi):
       break
 
   if date_col is None:
-    first_col = df_tx.columns[0]
-    if '\t' in first_col or ';' in first_col:
-      sep = '\t' if '\t' in first_col else ';'
-      df_tx = pd.read_csv(io.StringIO(df_tx.to_csv(index=False)), sep=sep)
-      df_tx.columns = [str(c).strip() for c in df_tx.columns]
-      date_col = [
-          c for c in df_tx.columns if 'תאריך' in c or 'date' in c.lower()
-      ][0]
-    else:
-      raise KeyError(
-          f"לא נמצאה עמודת 'תאריך'. העמודות שנמצאו בקובץ: {list(df_tx.columns)}"
-      )
+    raise KeyError(
+        f"לא נמצאה עמודת 'תאריך'. העמודות שנמצאו בקובץ: {list(df_tx.columns)}"
+    )
 
   if date_col != 'תאריך':
     df_tx = df_tx.rename(columns={date_col: 'תאריך'})
@@ -221,7 +248,11 @@ def allocate_waterfall(df_summary, pmt_amount, method='FIFO'):
 
 
 def run_full_calculation(
-    df_tx, df_cpi, annual_rate=6.0, compounding_freq='חודשית', method='FIFO'
+    df_tx_input,
+    df_cpi_input,
+    annual_rate=6.0,
+    compounding_freq='חודשית',
+    method='FIFO',
 ):
   r = annual_rate / 100.0
   if compounding_freq == 'יומית':
@@ -232,6 +263,9 @@ def run_full_calculation(
     r_daily = ((1.0 + r / 4.0) ** (4.0 / 365.0)) - 1.0
   elif compounding_freq == 'שנתית':
     r_daily = ((1.0 + r) ** (1.0 / 365.0)) - 1.0
+
+  df_tx = load_df_with_correct_encoding(df_tx_input)
+  df_cpi = load_df_with_correct_encoding(df_cpi_input)
 
   df_tx, df_cpi = clean_input_data(df_tx, df_cpi)
 
