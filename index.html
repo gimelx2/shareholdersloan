@@ -52,7 +52,7 @@
             <hr class="mb-6">
             <h2 class="text-xl font-bold text-slate-900 mb-4">📊 תוצאות החישוב</h2>
             <div id="summary_cards" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6"></div>
-            <a id="download_link" class="block w-full text-center bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-lg shadow">
+            <a id="download_link" class="block w-full text-center bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-lg shadow transition">
                 📥 הורד קובץ Excel מעוצב (XLSX)
             </a>
         </div>
@@ -62,25 +62,48 @@
         let pyodide;
 
         async function initPyodide() {
-            pyodide = await loadPyodide();
-            await pyodide.loadPackage(["pandas", "openpyxl"]);
-            
-            // טעינת engine.py
-            const response = await fetch('engine.py');
-            const code = await response.text();
-            pyodide.runPython(code);
+            try {
+                // 1. טעינת Pyodide
+                pyodide = await loadPyodide();
 
-            // טעינת cpi.csv ברירת מחדל
-            const cpiResp = await fetch('data/cpi.csv');
-            const cpiCsv = await cpiResp.text();
-            pyodide.FS.writeFile("cpi.csv", cpiCsv);
+                // 2. התקנת micropip והתקנת ספריות pandas ו-openpyxl
+                await pyodide.loadPackage("micropip");
+                const micropip = pyodide.pyimport("micropip");
+                await micropip.install(['pandas', 'openpyxl']);
 
-            document.getElementById('status').className = "bg-emerald-50 text-emerald-800 p-4 rounded-lg mb-6";
-            document.getElementById('status').innerHTML = "✓ מנוע החישוב מוכן לפעולה!";
-            
-            const btn = document.getElementById('run_btn');
-            btn.disabled = false;
-            btn.className = "w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg shadow cursor-pointer transition";
+                // 3. טעינת engine.py
+                const response = await fetch('engine.py');
+                if (!response.ok) {
+                    throw new Error("לא ניתן למצוא את הקובץ engine.py ברפוזיטורי");
+                }
+                const code = await response.text();
+                pyodide.runPython(code);
+
+                // 4. טעינת cpi.csv (תמיכה בתיקייה ראשית ובתיקיית data)
+                let cpiResp = await fetch('data/cpi.csv');
+                if (!cpiResp.ok) {
+                    cpiResp = await fetch('cpi.csv');
+                }
+                if (cpiResp.ok) {
+                    const cpiCsv = await cpiResp.text();
+                    pyodide.FS.writeFile("cpi.csv", cpiCsv);
+                } else {
+                    console.warn("קובץ cpi.csv לא נמצא בשרת, תתאפשר טעינה ידנית בעת הצורך");
+                }
+
+                // עדכון סטטוס הצלחה
+                document.getElementById('status').className = "bg-emerald-50 text-emerald-800 p-4 rounded-lg mb-6 flex items-center gap-3";
+                document.getElementById('status').innerHTML = "<span>✓</span><span>מנוע החישוב וספריות ה-Excel מוכנים לפעולה!</span>";
+                
+                const btn = document.getElementById('run_btn');
+                btn.disabled = false;
+                btn.className = "w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg shadow cursor-pointer transition";
+
+            } catch (err) {
+                console.error("שגיאה בטעינת המערכת:", err);
+                document.getElementById('status').className = "bg-red-50 text-red-800 p-4 rounded-lg mb-6 flex items-center gap-3";
+                document.getElementById('status').innerHTML = "<span>❌</span><span>שגיאה בטעינת המערכת: " + err.message + "</span>";
+            }
         }
 
         initPyodide();
@@ -105,8 +128,16 @@ import io
 import openpyxl
 from openpyxl.styles import Alignment
 
-df_tx = pd.read_csv("cf.csv", encoding="iso-8859-8")
-df_cpi = pd.read_csv("cpi.csv", encoding="iso-8859-8")
+# ניסיון קריאה גמיש לתמיכה בקידודי אקסל בעברית
+try:
+    df_tx = pd.read_csv("cf.csv", encoding="iso-8859-8")
+except:
+    df_tx = pd.read_csv("cf.csv", encoding="utf-8")
+
+try:
+    df_cpi = pd.read_csv("cpi.csv", encoding="iso-8859-8")
+except:
+    df_cpi = pd.read_csv("cpi.csv", encoding="utf-8")
 
 history, tables = run_full_calculation(
     df_tx, df_cpi, 
@@ -118,7 +149,7 @@ history, tables = run_full_calculation(
 last = history[-1]
 tot_debt = last['קרן יתרת סגירה'] + last['ריבית יתרת סגירה'] + last['הפרשי הצמדה קרן יתרת סגירה'] + last['הפרשי הצמדה ריבית יתרת סגירה']
 
-# יצירת Excel בזיכרון
+# יצירת קובץ Excel בזיכרון
 output = io.BytesIO()
 with pd.ExcelWriter(output, engine='openpyxl') as writer:
     pd.DataFrame(history)[COLUMNS].to_excel(writer, sheet_name='טבלה מאוחדת', index=False)
@@ -153,27 +184,32 @@ res_summary = {
     'tot': tot_debt
 }
 `;
-            pyodide.runPython(script);
+            try {
+                pyodide.runPython(script);
 
-            const res = pyodide.globals.get('res_summary').toJs();
-            const excelBytes = pyodide.globals.get('excel_bytes').toJs();
+                const res = pyodide.globals.get('res_summary').toJs();
+                const excelBytes = pyodide.globals.get('excel_bytes').toJs();
 
-            // הצגת כרטיסיות סיכום
-            document.getElementById('summary_cards').innerHTML = `
-                <div class="bg-slate-100 p-3 rounded-lg"><div class="text-xs text-slate-500">קרן</div><div class="text-lg font-bold">₪${res.get('p').toLocaleString('he-IL', {minimumFractionDigits:2})}</div></div>
-                <div class="bg-slate-100 p-3 rounded-lg"><div class="text-xs text-slate-500">ריבית</div><div class="text-lg font-bold">₪${res.get('i').toLocaleString('he-IL', {minimumFractionDigits:2})}</div></div>
-                <div class="bg-slate-100 p-3 rounded-lg"><div class="text-xs text-slate-500">הפרשי הצמדה</div><div class="text-lg font-bold">₪${res.get('adj').toLocaleString('he-IL', {minimumFractionDigits:2})}</div></div>
-                <div class="bg-blue-100 p-3 rounded-lg"><div class="text-xs text-blue-600">סה"כ חוב</div><div class="text-lg font-bold text-blue-900">₪${res.get('tot').toLocaleString('he-IL', {minimumFractionDigits:2})}</div></div>
-            `;
+                // הצגת כרטיסיות סיכום
+                document.getElementById('summary_cards').innerHTML = `
+                    <div class="bg-slate-100 p-3 rounded-lg"><div class="text-xs text-slate-500">קרן</div><div class="text-lg font-bold">₪${res.get('p').toLocaleString('he-IL', {minimumFractionDigits:2})}</div></div>
+                    <div class="bg-slate-100 p-3 rounded-lg"><div class="text-xs text-slate-500">ריבית</div><div class="text-lg font-bold">₪${res.get('i').toLocaleString('he-IL', {minimumFractionDigits:2})}</div></div>
+                    <div class="bg-slate-100 p-3 rounded-lg"><div class="text-xs text-slate-500">הפרשי הצמדה</div><div class="text-lg font-bold">₪${res.get('adj').toLocaleString('he-IL', {minimumFractionDigits:2})}</div></div>
+                    <div class="bg-blue-100 p-3 rounded-lg"><div class="text-xs text-blue-600">סה"כ חוב</div><div class="text-lg font-bold text-blue-900">₪${res.get('tot').toLocaleString('he-IL', {minimumFractionDigits:2})}</div></div>
+                `;
 
-            // הכנת קישור להורדת Excel
-            const blob = new Blob([excelBytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-            const url = URL.createObjectURL(blob);
-            const downloadBtn = document.getElementById('download_link');
-            downloadBtn.href = url;
-            downloadBtn.download = `calculation_results_${method}.xlsx`;
+                // הכנת קישור להורדת קובץ ה-Excel
+                const blob = new Blob([excelBytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                const url = URL.createObjectURL(blob);
+                const downloadBtn = document.getElementById('download_link');
+                downloadBtn.href = url;
+                downloadBtn.download = `calculation_results_${method.toLowerCase()}.xlsx`;
 
-            document.getElementById('result_area').classList.remove('hidden');
+                document.getElementById('result_area').classList.remove('hidden');
+            } catch (err) {
+                console.error("שגיאה בהרצת החישוב:", err);
+                alert("אירעה שגיאה בביצוע החישוב. ודא שקובץ התזרימים תקין ומכיל את העמודות הנדרשות.");
+            }
         }
     </script>
 </body>
