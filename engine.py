@@ -2,7 +2,7 @@ from datetime import date
 import io
 import json
 import openpyxl
-from openpyxl.styles import Alignment
+from openpyxl.styles import Alignment, Font, PatternFill
 import pandas as pd
 
 COLUMNS = [
@@ -206,12 +206,13 @@ def get_known_cpi(current_date, cpi_df):
   if not matched.empty:
     return matched['מדד בגין'].iloc[0]
   else:
-    return None
+    last_available = cpi_df.iloc[-1]['מדד בגין']
+    return last_available
 
 
-def build_timeline(min_date, max_date, tx_dates):
+def build_timeline(min_date, target_as_of_date, tx_dates):
   min_dt = pd.to_datetime(min_date)
-  max_dt = pd.to_datetime(max_date)
+  max_dt = pd.to_datetime(target_as_of_date)
 
   first_of_months = pd.date_range(
       start=min_dt.replace(day=1), end=max_dt.replace(day=1), freq='MS'
@@ -221,9 +222,13 @@ def build_timeline(min_date, max_date, tx_dates):
       first_of_months.map(lambda d: d.replace(day=d.days_in_month)).date
   )
 
-  all_dates = set(tx_dates).union(month_ends)
+  all_dates = set(
+      [d for d in tx_dates if d <= max_dt.date()]
+  ).union(month_ends)
+  all_dates.add(max_dt.date())
+
   timeline = sorted(
-      [d for d in all_dates if d >= pd.to_datetime(min_date).date()]
+      [d for d in all_dates if d >= min_dt.date() and d <= max_dt.date()]
   )
 
   return timeline
@@ -303,11 +308,13 @@ def run_calculation_json(params_json):
 
   tx_file_path = params['tx_file_path']
   cpi_file_path = params['cpi_file_path']
+  original_filename = params.get('original_filename', 'קובץ תזרים')
   col_map = params['col_map']
   type_map = params['type_map']
   annual_rate = float(params['annual_rate'])
   compounding_freq = params['compounding_freq']
   method = params['method']
+  user_as_of_date_str = params.get('as_of_date', '')
 
   r = annual_rate / 100.0
   if compounding_freq == 'יומית':
@@ -324,8 +331,17 @@ def run_calculation_json(params_json):
 
   df_tx, df_cpi = clean_input_data(df_tx, df_cpi, col_map, type_map)
 
+  if user_as_of_date_str:
+    target_as_of_dt = pd.to_datetime(user_as_of_date_str, dayfirst=True).date()
+  else:
+    target_as_of_dt = date.today()
+
+  # סינון תנועות שמתרחשות לאחר תאריך הנכונות שנבחר
+  df_tx = df_tx[df_tx['תאריך'] <= target_as_of_dt]
+
   tx_dates = set(pd.to_datetime(df_tx['תאריך']).dt.date)
-  timeline = build_timeline(min(tx_dates), max(tx_dates), tx_dates)
+  min_tx_date = min(tx_dates) if tx_dates else target_as_of_dt
+  timeline = build_timeline(min_tx_date, target_as_of_dt, tx_dates)
 
   tables = {}
   tranche_counter = 0
@@ -337,7 +353,7 @@ def run_calculation_json(params_json):
     day_txs = df_tx[df_tx['תאריך'] == dt]
     days_from_prev = (dt - prev_timeline_dt).days if prev_timeline_dt else 0
 
-    # 1. חישוב צבירות לתקופה (לפני תזרימי היום)
+    # 1. צבירות לתקופה (לפני תזרימי היום)
     for t_id, t in tables.items():
       if dt <= t['last_dt']:
         continue
@@ -370,22 +386,16 @@ def run_calculation_json(params_json):
         t['last_dt'] = dt
         continue
 
-      # צבירת ריבית
       new_i = t['p'] * (((1.0 + r_daily) ** days) - 1.0)
       closing_i_unadjusted = t['i'] + new_i
 
-      # 1.1 הצמדת הקרן המצטברת מיום יצירת/סילוק הקרן (base_idx)
       base_idx = t['base_idx']
       cum_idx_factor = (idx / base_idx) - 1.0 if base_idx > 0 else 0.0
       target_adj_p_closing = t['p'] * cum_idx_factor
       new_adj_p = target_adj_p_closing - t['adj_p']
 
-      # 1.2 הצמדת הריבית:
-      # א' - הצמדת הריבית הקיימת ממועד החישוב/סילוק האחרון (last_idx)
       period_idx_factor = (idx / t['last_idx']) - 1.0 if t['last_idx'] > 0 else 0.0
       adj_existing_i = (t['i'] + t['adj_i']) * period_idx_factor
-
-      # ב' - הצמדת הריבית החדשה שנצברה מיום הבסיס המקורי (base_idx)
       adj_new_i = new_i * cum_idx_factor
 
       new_adj_i = adj_existing_i + adj_new_i
@@ -419,9 +429,9 @@ def run_calculation_json(params_json):
       t['last_dt'] = dt
       t['last_idx'] = idx
 
-    # 2. הזרמת התזרימים היומיים (משיכות / הפקדות)
+    # 2. הזרמת התזרימים היומיים
     for _, tx in day_txs.iterrows():
-      tx_type = str(tx['功ג תנועה'] if '功ג תנועה' in tx else tx['סוג תנועה']).strip()
+      tx_type = str(tx['סוג תנועה']).strip()
       amt = abs(float(tx['סכום']))
 
       if 'משיכה' in tx_type or 'withdraw' in tx_type:
@@ -449,11 +459,9 @@ def run_calculation_json(params_json):
 
             if row['pay_p'] > 0:
               t['p'] -= row['pay_p']
-              # עדכון מדד הבסיס של הקרן הנותרת למועד הסילוק!
               t['base_idx'] = idx
 
             r_dict['קרן יתרת סגירה'] = t['p']
-            # עדכון מדד עדכון אחרון למועד הסילוק
             t['last_idx'] = idx
         else:
           rem_surplus = amt
@@ -617,44 +625,9 @@ def run_calculation_json(params_json):
 
     prev_timeline_dt = dt
 
-  output_path = 'output_results.xlsx'
-  with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-    pd.DataFrame(consolidated_history)[COLUMNS].to_excel(
-        writer, sheet_name='טבלה מאוחדת', index=False
-    )
-    for t_id, t in tables.items():
-      label = (
-          f'הפקדה_{t_id}'
-          if t.get('type') == 'deposit'
-          else f'משיכת_יתר_{t_id}'
-      )
-      pd.DataFrame(t['rows'])[COLUMNS].to_excel(
-          writer, sheet_name=label, index=False
-      )
-
-  wb = openpyxl.load_workbook(output_path)
-  for ws in wb.worksheets:
-    ws.sheet_view.rightToLeft = True
-    ws.freeze_panes = 'B2'
-    for cell in ws[1]:
-      cell.alignment = Alignment(
-          wrap_text=True, horizontal='center', vertical='center'
-      )
-    for row in ws.iter_rows(
-        min_row=2, max_row=ws.max_row, max_col=ws.max_column
-    ):
-      for cell in row:
-        if cell.column == 1:
-          cell.number_format = 'YYYY-MM-DD'
-        elif cell.column in [2, 3]:
-          cell.number_format = '#,##0.00' if cell.column == 2 else '#,##0'
-        else:
-          cell.number_format = '#,##0.00'
-
-  wb.save(output_path)
-
   last = consolidated_history[-1]
   as_of_date_str = pd.to_datetime(last['תאריך']).strftime('%d/%m/%Y')
+  last_cpi_val = float(last['מדד ידוע'])
   tot_debt = (
       last['קרן יתרת סגירה']
       + last['ריבית יתרת סגירה']
@@ -662,8 +635,146 @@ def run_calculation_json(params_json):
       + last['הפרשי הצמדה ריבית יתרת סגירה']
   )
 
+  # יצירת קובץ Excel מעוצב הכולל גיליון הנחות והסברים מקיף
+  output_path = 'output_results.xlsx'
+  wb = openpyxl.Workbook()
+  wb.remove(wb.active)  # הסרת הגיליון הדיפולטי
+
+  # 1. יצירת גיליון "עקרונות והנחות חישוב"
+  ws_info = wb.create_sheet(title='עקרונות והנחות חישוב')
+  ws_info.sheet_view.rightToLeft = True
+
+  header_fill = PatternFill(
+      start_color='2F3A5B', end_color='2F3A5B', fill_type='solid'
+  )
+  header_font = Font(name='Calibri', size=11, bold=True, color='FFFFFF')
+  title_font = Font(name='Calibri', size=16, bold=True, color='2F3A5B')
+  bold_font = Font(name='Calibri', size=11, bold=True)
+
+  ws_info['A1'] = 'דו"ח חישוב הפרשי הצמדה וריבית - Wise Consulting Group'
+  ws_info['A1'].font = title_font
+
+  info_rows = [
+      ('תאריך הפקת הדוח:', date.today().strftime('%d/%m/%Y')),
+      ('תאריך נכונות החישוב שנבחר:', as_of_date_str),
+      ('מדד המחירים לצרכן הידוע לתאריך הנכונות:', f'{last_cpi_val:,.2f}'),
+      ('שם קובץ הנתונים שהועלה:', original_filename),
+      ('שיעור ריבית שנתית:', f'{annual_rate}%'),
+      ('תדירות חישוב הריבית:', compounding_freq),
+      ('שיטת סילוק משיכות:', f'{method} (Waterfall)'),
+      ('', ''),
+      ('סיכום יתרות לתאריך הנכונות:', ''),
+      ('יתרת קרן לסגירה:', float(last['קרן יתרת סגירה'])),
+      ('יתרת ריבית נצברת:', float(last['ריבית יתרת סגירה'])),
+      ('יתרת הפרשי הצמדה (קרן + ריבית):', float(
+          last['הפרשי הצמדה קרן יתרת סגירה']
+          + last['הפרשי הצמדה ריבית יתרת סגירה']
+      )),
+      ('סה"כ חוב/יתרה מחושבת:', float(tot_debt)),
+      ('', ''),
+      ('מתודולוגיה ועקרונות החישוב במערכת:', ''),
+      (
+          '1. ניהול שכבות (Tranches):',
+          'כל הפקדה או משיכה פותחת שכבת תזרים נפרדת הצוברת ריבית והצמדה באופן'
+          ' עצמאי.',
+      ),
+      (
+          '2. סדר קדימות הפירעון (Waterfall):',
+          'סילוקים/תזרימים מנוכים לפי הסדר הבא: ריבית נצברת -> הפרשי הצמדה'
+          ' ריבית -> הפרשי הצמדה קרן -> קרן.',
+      ),
+      (
+          '3. מנוע ההצמדה למדד (CPI):',
+          'ההצמדה מחושבת על בסיס מדד המחירים לצרכן הידוע לכל תאריך. הצמדת הקרן'
+          ' והריבית מתעדכנות באופן מצטבר מיום יצירת השכבה/הסילוק האחרון.',
+      ),
+      (
+          '4. משיכות יתר (Overdraft):',
+          'תזרימי משיכה העולים על סך היתרות הקיימות פותחים שכבת חוב שלילית'
+          ' הצוברת ריבית והצמדה לפי אותם הפרמטרים.',
+      ),
+  ]
+
+  for r_idx, (k, v) in enumerate(info_rows, start=3):
+    ws_info.cell(row=r_idx, column=1, value=k).font = bold_font
+    cell_v = ws_info.cell(row=r_idx, column=2, value=v)
+    if isinstance(v, float):
+      cell_v.number_format = '#,##0.00'
+
+  # הוספת טבלת תזרימי הקלט שהועלו לגיליון ההסברים
+  start_tx_row = len(info_rows) + 5
+  ws_info.cell(row=start_tx_row, column=1, value='פירוט נתוני התזרים שהועלו ונבדקו:').font = title_font
+
+  tx_headers = ['תאריך תזרים', 'סוג תנועה', 'סכום (₪)']
+  for c_idx, h in enumerate(tx_headers, start=1):
+    cell = ws_info.cell(row=start_tx_row + 1, column=c_idx, value=h)
+    cell.fill = header_fill
+    cell.font = header_font
+
+  for r_offset, (_, row_tx) in enumerate(df_tx.iterrows(), start=start_tx_row + 2):
+    c1 = ws_info.cell(row=r_offset, column=1, value=pd.to_datetime(row_tx['תאריך']).strftime('%Y-%m-%d'))
+    c2 = ws_info.cell(row=r_offset, column=2, value=str(row_tx['סוג תנועה']))
+    c3 = ws_info.cell(row=r_offset, column=3, value=float(row_tx['סכום']))
+    c3.number_format = '#,##0.00'
+
+  # 2. הוספת גיליון טבלה מאוחדת וגיליונות השכבות
+  ws_main = wb.create_sheet(title='טבלה מאוחדת')
+  ws_main.sheet_view.rightToLeft = True
+
+  df_main = pd.DataFrame(consolidated_history)[COLUMNS]
+  for c_idx, col_name in enumerate(COLUMNS, start=1):
+    cell = ws_main.cell(row=1, column=c_idx, value=col_name)
+    cell.fill = header_fill
+    cell.font = header_font
+
+  for r_idx, row_data in enumerate(df_main.values, start=2):
+    for c_idx, val in enumerate(row_data, start=1):
+      cell = ws_main.cell(row=r_idx, column=c_idx, value=val)
+      if c_idx == 1:
+        cell.number_format = 'YYYY-MM-DD'
+      elif c_idx in [2, 3]:
+        cell.number_format = '#,##0.00' if c_idx == 2 else '#,##0'
+      else:
+        cell.number_format = '#,##0.00'
+
+  for t_id, t in tables.items():
+    label = (
+        f'הפקדה_{t_id}'
+        if t.get('type') == 'deposit'
+        else f'משיכת_יתר_{t_id}'
+    )
+    ws_t = wb.create_sheet(title=label)
+    ws_t.sheet_view.rightToLeft = True
+    df_t = pd.DataFrame(t['rows'])[COLUMNS]
+
+    for c_idx, col_name in enumerate(COLUMNS, start=1):
+      cell = ws_t.cell(row=1, column=c_idx, value=col_name)
+      cell.fill = header_fill
+      cell.font = header_font
+
+    for r_idx, row_data in enumerate(df_t.values, start=2):
+      for c_idx, val in enumerate(row_data, start=1):
+        cell = ws_t.cell(row=r_idx, column=c_idx, value=val)
+        if c_idx == 1:
+          cell.number_format = 'YYYY-MM-DD'
+        elif c_idx in [2, 3]:
+          cell.number_format = '#,##0.00' if c_idx == 2 else '#,##0'
+        else:
+          cell.number_format = '#,##0.00'
+
+  # עיצוב רוחב עמודות אוטומטי לכל הגיליונות
+  for ws in wb.worksheets:
+    ws.freeze_panes = 'A2' if ws.title == 'עקרונות והנחות חישוב' else 'B2'
+    for col in ws.columns:
+      max_len = max(len(str(cell.value or '')) for cell in col)
+      col_letter = openpyxl.utils.get_column_letter(col[0].column)
+      ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
+
+  wb.save(output_path)
+
   summary = {
       'as_of_date': as_of_date_str,
+      'last_cpi_val': last_cpi_val,
       'p': float(last['קרן יתרת סגירה']),
       'i': float(last['ריבית יתרת סגירה']),
       'adj': float(
@@ -674,6 +785,7 @@ def run_calculation_json(params_json):
       'annual_rate': annual_rate,
       'compounding_freq': compounding_freq,
       'method': method,
+      'tx_count': len(df_tx),
   }
 
   return json.dumps(summary, ensure_ascii=False)
