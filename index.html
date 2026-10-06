@@ -14,7 +14,7 @@
 
         <div id="status" class="bg-blue-50 text-blue-800 p-4 rounded-lg mb-6 flex items-center gap-3">
             <span class="animate-spin text-xl">⏳</span>
-            <span>טוען מנוע Python וספריות חישוב בדפדפן... אנא המתן. אורך כשלוש דקות</span>
+            <span>טוען מנוע Python וספריות חישוב בדפדפן... אנא המתן.</span>
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
@@ -81,10 +81,8 @@
                     cpiResp = await fetch('cpi.csv');
                 }
                 if (cpiResp.ok) {
-                    const cpiCsv = await cpiResp.text();
-                    pyodide.FS.writeFile("cpi.csv", cpiCsv);
-                } else {
-                    console.warn("קובץ cpi.csv לא נמצא, תתאפשר טעינה ידנית בעת הצורך");
+                    const cpiBuf = await cpiResp.arrayBuffer();
+                    pyodide.FS.writeFile("cpi.csv", new Uint8Array(cpiBuf));
                 }
 
                 document.getElementById('status').className = "bg-emerald-50 text-emerald-800 p-4 rounded-lg mb-6 flex items-center gap-3";
@@ -112,9 +110,10 @@
 
             const uploadedFile = fileInput.files[0];
             const fileName = uploadedFile.name;
-            const cfText = await uploadedFile.text();
-
-            pyodide.FS.writeFile(fileName, cfText);
+            
+            // קריאת הקובץ כ-ArrayBuffer של בייטס ישירים למניעת עיוותי עברית
+            const buffer = await uploadedFile.arrayBuffer();
+            pyodide.FS.writeFile(fileName, new Uint8Array(buffer));
 
             const rate = document.getElementById('annual_rate').value;
             const freq = document.getElementById('compounding_freq').value;
@@ -126,18 +125,15 @@ import io
 import openpyxl
 from openpyxl.styles import Alignment
 
-try:
-    df_tx = pd.read_csv("${fileName}", sep=None, engine="python", encoding="utf-8-sig")
-except:
-    df_tx = pd.read_csv("${fileName}", sep=None, engine="python", encoding="iso-8859-8")
+# קריאת בייטס מהקובץ הווירטואלי
+with open("${fileName}", "rb") as f:
+    raw_tx_bytes = f.read()
 
-try:
-    df_cpi = pd.read_csv("cpi.csv", sep=None, engine="python", encoding="utf-8-sig")
-except:
-    df_cpi = pd.read_csv("cpi.csv", sep=None, engine="python", encoding="iso-8859-8")
+with open("cpi.csv", "rb") as f:
+    raw_cpi_bytes = f.read()
 
 history, tables = run_full_calculation(
-    df_tx, df_cpi, 
+    raw_tx_bytes, raw_cpi_bytes, 
     annual_rate=${rate}, 
     compounding_freq='${freq}', 
     method='${method}'
