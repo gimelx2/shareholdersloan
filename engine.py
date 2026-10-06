@@ -1,4 +1,5 @@
 from datetime import date
+import io
 import openpyxl
 from openpyxl.styles import Alignment
 import pandas as pd
@@ -27,9 +28,55 @@ COLUMNS = [
 
 
 def clean_input_data(df_tx, df_cpi):
+  # 1. ניקוי תווי BOM נסתרים ורווחים משמות העמודות
+  df_tx.columns = [
+      str(col).encode('utf-8').decode('utf-8-sig').strip()
+      for col in df_tx.columns
+  ]
+  df_cpi.columns = [
+      str(col).encode('utf-8').decode('utf-8-sig').strip()
+      for col in df_cpi.columns
+  ]
+
+  # 2. איתור גמיש של עמודת התאריך
+  date_col = None
+  for col in df_tx.columns:
+    if 'תאריך' in col or 'date' in col.lower():
+      date_col = col
+      break
+
+  if date_col is None:
+    # מקרה קצה: אם כל השורה נקראה כעמודה אחת עקב תו הפרדה לא תואם
+    first_col = df_tx.columns[0]
+    if '\t' in first_col or ';' in first_col:
+      sep = '\t' if '\t' in first_col else ';'
+      # פיצול מחדש במידה וההפרדה הייתה שגויה
+      df_tx = pd.read_csv(io.StringIO(df_tx.to_csv(index=False)), sep=sep)
+      df_tx.columns = [str(c).strip() for c in df_tx.columns]
+      date_col = [c for c in df_tx.columns if 'תאריך' in c or 'date' in c.lower()][0]
+    else:
+      raise KeyError(
+          f"לא נמצאה עמודת 'תאריך'. העמודות שנמצאו בקובץ: {list(df_tx.columns)}"
+      )
+
+  if date_col != 'תאריך':
+    df_tx = df_tx.rename(columns={date_col: 'תאריך'})
+
+  # איתור גמיש של עמודת המדד
+  cpi_month_col = None
+  for col in df_cpi.columns:
+    if 'חודש' in col or 'month' in col.lower():
+      cpi_month_col = col
+      break
+
+  if cpi_month_col and cpi_month_col != 'חודש':
+    df_cpi = df_cpi.rename(columns={cpi_month_col: 'חודש'})
+
+  # 3. המרת תאריכים
   df_tx['תאריך'] = pd.to_datetime(df_tx['תאריך'], dayfirst=True).dt.date
   df_cpi['חודש'] = pd.to_datetime(df_cpi['חודש'], dayfirst=True).dt.date
 
+  # 4. המרת סכומים ומדדים למספרים (ניקוי פסיקים)
   if df_tx['סכום'].dtype == 'object':
     df_tx['סכום'] = (
         df_tx['סכום'].astype(str).str.replace(',', '').astype(float)
@@ -44,6 +91,7 @@ def clean_input_data(df_tx, df_cpi):
   else:
     df_cpi['מדד בגין'] = df_cpi['מדד בגין'].astype(float)
 
+  # 5. מיון
   df_tx = df_tx.sort_values('תאריך').reset_index(drop=True)
   df_cpi = df_cpi.sort_values('חודש').reset_index(drop=True)
 
