@@ -339,8 +339,8 @@ def run_calculation_json(params_json):
       if dt <= t['last_dt']:
         continue
 
-      tot_balance = t['p'] + t['i'] + t['adj_p'] + t['adj_i']
       days = (dt - t['last_dt']).days
+      tot_balance = t['p'] + t['i'] + t['adj_p'] + t['adj_i']
 
       if abs(tot_balance) <= 0.0001:
         t['pending_row'] = {
@@ -367,11 +367,21 @@ def run_calculation_json(params_json):
         t['last_dt'] = dt
         continue
 
+      # 1. חישוב צבירת ריבית לא-מוצמדת לתקופה
       new_i = t['p'] * (((1.0 + r_daily) ** days) - 1.0)
-      idx_factor = (idx / t['last_idx']) - 1.0 if t['last_idx'] > 0 else 0.0
+      closing_i_unadjusted = t['i'] + new_i
 
-      new_adj_p = (t['p'] + t['adj_p']) * idx_factor
-      new_adj_i = (t['i'] + new_i + t['adj_i']) * idx_factor
+      # 2. חישוב מקדם הצמדה מצטבר מיום יצירת השכבה המקורי
+      base_idx = t['base_idx']
+      cum_idx_factor = (idx / base_idx) - 1.0 if base_idx > 0 else 0.0
+
+      # 3. יתרות סגירה מבוקשות להצמדה
+      target_adj_p_closing = t['p'] * cum_idx_factor
+      target_adj_i_closing = closing_i_unadjusted * cum_idx_factor
+
+      # 4. גזירת התנועה התקופתית כמשלים (Plug)
+      new_adj_p = target_adj_p_closing - t['adj_p']
+      new_adj_i = target_adj_i_closing - t['adj_i']
 
       t['pending_row'] = {
           'תאריך': dt,
@@ -384,20 +394,20 @@ def run_calculation_json(params_json):
           'ריבית יתרת פתיחה': t['i'],
           'צבירת ריבית': new_i,
           'סילוק ריבית': 0.0,
-          'ריבית יתרת סגירה': t['i'] + new_i,
+          'ריבית יתרת סגירה': closing_i_unadjusted,
           'הפרשי הצמדה קרן יתרת פתיחה': t['adj_p'],
           'צבירת הפרשי הצמדה קרן': new_adj_p,
           'סילוק הפרשי הצמדה קרן': 0.0,
-          'הפרשי הצמדה קרן יתרת סגירה': t['adj_p'] + new_adj_p,
+          'הפרשי הצמדה קרן יתרת סגירה': target_adj_p_closing,
           'הפרשי הצמדה ריבית יתרת פתיחה': t['adj_i'],
           'צבירת הפרשי הצמדה ריבית': new_adj_i,
           'סילוק הפרשי הצמדה ריבית': 0.0,
-          'הפרשי הצמדה ריבית יתרת סגירה': t['adj_i'] + new_adj_i,
+          'הפרשי הצמדה ריבית יתרת סגירה': target_adj_i_closing,
       }
 
-      t['i'] += new_i
-      t['adj_i'] += new_adj_i
-      t['adj_p'] += new_adj_p
+      t['i'] = closing_i_unadjusted
+      t['adj_p'] = target_adj_p_closing
+      t['adj_i'] = target_adj_i_closing
       t['last_dt'] = dt
       t['last_idx'] = idx
 
@@ -440,6 +450,7 @@ def run_calculation_json(params_json):
               'i': 0.0,
               'adj_p': 0.0,
               'adj_i': 0.0,
+              'base_idx': idx,  # מדד בסיס מקורי לחישוב מצטבר
               'last_dt': dt,
               'last_idx': idx,
               'rows': [{
@@ -499,6 +510,7 @@ def run_calculation_json(params_json):
               'i': 0.0,
               'adj_p': 0.0,
               'adj_i': 0.0,
+              'base_idx': idx,  # מדד בסיס מקורי לחישוב מצטבר
               'last_dt': dt,
               'last_idx': idx,
               'rows': [{
