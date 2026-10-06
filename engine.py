@@ -28,82 +28,94 @@ COLUMNS = [
 
 
 def load_df_with_correct_encoding(file_input):
-  """טוענת CSV או Bytes ומנסה את כל קידודי העברית הנפוצים."""
+  """טוענת CSV או Bytes ומנסה את כל קידודי העברית והאירופאים הנפוצים."""
   if isinstance(file_input, pd.DataFrame):
     return file_input
 
-  # אם קיבלנו בייטס (Bytes)
   raw_data = (
       file_input if isinstance(file_input, bytes) else file_input.encode()
   )
-
   encodings_to_try = ['utf-8-sig', 'cp1255', 'iso-8859-8', 'utf-8']
-  df = None
 
   for enc in encodings_to_try:
     try:
       df = pd.read_csv(
           io.BytesIO(raw_data), sep=None, engine='python', encoding=enc
       )
-      # בדיקה האם פוענחה עברית תקינה באחת הכותרות
-      headers_str = ''.join([str(c) for c in df.columns])
-      if any('\u0590' <= char <= '\u05ff' for char in headers_str) or any(
-          k in headers_str for k in ['date', 'sug', 'sum']
-      ):
-        break
+      if not df.empty and len(df.columns) >= 2:
+        return df
     except Exception:
       continue
 
-  if df is None:
-    # ניסיון ברירת מחדל אחרון
-    df = pd.read_csv(
-        io.BytesIO(raw_data), sep=None, engine='python', encoding='iso-8859-8'
-    )
-
-  return df
+  return pd.read_csv(
+      io.BytesIO(raw_data), sep=None, engine='python', encoding='iso-8859-8'
+  )
 
 
-def clean_input_data(df_tx, df_cpi):
-  # 1. ניקוי תווי BOM נסתרים ורווחים משמות העמודות
-  df_tx.columns = [
-      str(col).encode('utf-8', errors='ignore').decode('utf-8-sig').strip()
-      for col in df_tx.columns
-  ]
-  df_cpi.columns = [
-      str(col).encode('utf-8', errors='ignore').decode('utf-8-sig').strip()
+def extract_file_metadata(file_bytes):
+  """פונקציית עזר להחזרת כותרות העמודות והערכים הייחודיים בסוג התנועה."""
+  df = load_df_with_correct_encoding(file_bytes)
+  cols = [str(c).strip() for c in df.columns]
+
+  # ניקוי שמות עמודות מ-BOM
+  cleaned_cols = []
+  for c in cols:
+    try:
+      cleaned_cols.append(
+          c.encode('utf-8', errors='ignore').decode('utf-8-sig').strip()
+      )
+    except Exception:
+      cleaned_cols.append(c)
+
+  df.columns = cleaned_cols
+  return df, cleaned_cols
+
+
+def clean_input_data(df_tx, df_cpi, col_map, type_map):
+  """מנרמלת את הנתונים לפי המיפוי הדינמי שהתקבל מהמשתמש."""
+  # 1. ניקוי עמודת CPI
+  df_cpi.columns = [str(col).strip() for col in df_cpi.columns]
+  cpi_month_col = [
+      col
       for col in df_cpi.columns
+      if 'חודש' in str(col) or 'month' in str(col).lower()
   ]
+  if cpi_month_col:
+    df_cpi = df_cpi.rename(columns={cpi_month_col[0]: 'חודש'})
 
-  # 2. איתור גמיש של עמודת התאריך
-  date_col = None
-  for col in df_tx.columns:
-    if 'תאריך' in col or 'date' in col.lower():
-      date_col = col
-      break
+  cpi_val_col = [
+      col
+      for col in df_cpi.columns
+      if 'מדד' in str(col) or 'cpi' in str(col).lower()
+  ]
+  if cpi_val_col:
+    df_cpi = df_cpi.rename(columns={cpi_val_col[0]: 'מדד בגין'})
 
-  if date_col is None:
-    raise KeyError(
-        f"לא נמצאה עמודת 'תאריך'. העמודות שנמצאו בקובץ: {list(df_tx.columns)}"
-    )
+  # 2. שינוי שמות עמודות התזרים לפי המפה שהתקבלה מהממשק
+  df_tx = df_tx.rename(
+      columns={
+          col_map['date']: 'תאריך',
+          col_map['amount']: 'סכום',
+          col_map['type']: 'סוג תנועה',
+      }
+  )
 
-  if date_col != 'תאריך':
-    df_tx = df_tx.rename(columns={date_col: 'תאריך'})
+  # 3. נרמול ערכי סוג התנועה
+  def normalize_type(val):
+    val_str = str(val).strip()
+    if val_str == type_map.get('deposit'):
+      return 'הפקדה'
+    elif val_str == type_map.get('withdraw'):
+      return 'משיכה'
+    return val_str
 
-  # איתור גמיש של עמודת המדד
-  cpi_month_col = None
-  for col in df_cpi.columns:
-    if 'חודש' in col or 'month' in col.lower():
-      cpi_month_col = col
-      break
+  df_tx['סוג תנועה'] = df_tx['סוג תנועה'].apply(normalize_type)
 
-  if cpi_month_col and cpi_month_col != 'חודש':
-    df_cpi = df_cpi.rename(columns={cpi_month_col: 'חודש'})
-
-  # 3. המרת תאריכים
+  # 4. המרת תאריכים
   df_tx['תאריך'] = pd.to_datetime(df_tx['תאריך'], dayfirst=True).dt.date
   df_cpi['חודש'] = pd.to_datetime(df_cpi['חודש'], dayfirst=True).dt.date
 
-  # 4. המרת סכומים ומדדים למספרים (ניקוי פסיקים)
+  # 5. המרת סכומים ומדדים
   if df_tx['סכום'].dtype == 'object':
     df_tx['סכום'] = (
         df_tx['סכום'].astype(str).str.replace(',', '').astype(float)
@@ -118,15 +130,8 @@ def clean_input_data(df_tx, df_cpi):
   else:
     df_cpi['מדד בגין'] = df_cpi['מדד בגין'].astype(float)
 
-  # 5. מיון
   df_tx = df_tx.sort_values('תאריך').reset_index(drop=True)
   df_cpi = df_cpi.sort_values('חודש').reset_index(drop=True)
-
-  df_tx['סוג תנועה'] = (
-      df_tx['sug'].astype(str).str.strip()
-      if 'sug' in df_tx.columns
-      else df_tx['סוג תנועה'].astype(str).str.strip()
-  )
 
   return df_tx, df_cpi
 
@@ -250,6 +255,8 @@ def allocate_waterfall(df_summary, pmt_amount, method='FIFO'):
 def run_full_calculation(
     df_tx_input,
     df_cpi_input,
+    col_map,
+    type_map,
     annual_rate=6.0,
     compounding_freq='חודשית',
     method='FIFO',
@@ -267,7 +274,7 @@ def run_full_calculation(
   df_tx = load_df_with_correct_encoding(df_tx_input)
   df_cpi = load_df_with_correct_encoding(df_cpi_input)
 
-  df_tx, df_cpi = clean_input_data(df_tx, df_cpi)
+  df_tx, df_cpi = clean_input_data(df_tx, df_cpi, col_map, type_map)
 
   tx_dates = set(pd.to_datetime(df_tx['תאריך']).dt.date)
   timeline = build_timeline(min(tx_dates), max(tx_dates), tx_dates)
