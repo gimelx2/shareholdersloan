@@ -3,19 +3,33 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>מחשבון הצמדה וריבית - ניהול שכבות</title>
+    <title>מחשבון הצמדה וריבית - Wise Consulting Group</title>
     <script src="https://cdn.jsdelivr.net/pyodide/v0.25.0/full/pyodide.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css">
 </head>
-<body class="bg-slate-50 text-slate-800 font-sans p-6">
-    <div class="max-w-4xl mx-auto bg-white shadow-xl rounded-xl p-8 border border-slate-200">
-        <h1 class="text-3xl font-bold text-slate-900 mb-2">📈 מחשבון הצמדה וריבית - ניהול שכבות</h1>
-        <p class="text-slate-600 mb-6">מערכת חישוב עצמאית הפועלת בדפדפן - ללא העברת נתונים לשרת חיצוני.</p>
+<body class="bg-slate-50 text-slate-800 font-sans p-6 min-h-screen flex flex-col justify-between">
+    <div class="max-w-4xl mx-auto bg-white shadow-xl rounded-xl p-8 border border-slate-200 w-full mb-8">
+        
+        <!-- Header ממותג Wise Consulting Group -->
+        <div class="flex flex-col md:flex-row justify-between items-center border-b border-slate-200 pb-6 mb-6 gap-4">
+            <div>
+                <h1 class="text-3xl font-bold text-slate-900 mb-1">📈 מחשבון הצמדה וריבית - ניהול שכבות</h1>
+                <p class="text-slate-500 text-sm">מערכת חישוב מקצועית מבית Wise Consulting Group</p>
+            </div>
+            <div class="flex items-center gap-2 bg-slate-100 p-2.5 rounded-lg border border-slate-200">
+                <span class="text-2xl font-black tracking-tighter text-slate-900">Wise</span>
+                <span class="text-xs text-slate-500 uppercase tracking-widest leading-tight block border-r border-slate-300 pr-2 mr-1">Consulting<br>Group</span>
+            </div>
+        </div>
 
-        <div id="status" class="bg-blue-50 text-blue-800 p-4 rounded-lg mb-6 flex items-center gap-3">
+        <div id="status" class="bg-blue-50 text-blue-800 p-4 rounded-lg mb-6 flex items-center gap-3 text-sm">
             <span class="animate-spin text-xl">⏳</span>
             <span>טוען מנוע Python וספריות חישוב בדפדפן... אנא המתן.</span>
         </div>
+
+        <!-- תיבת שגיאות ויזואלית -->
+        <div id="error_box" class="hidden bg-red-100 border-l-4 border-red-500 text-red-700 p-4 mb-6 rounded shadow whitespace-pre-wrap font-mono text-xs"></div>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
             <div>
@@ -76,22 +90,53 @@
             </div>
         </div>
 
-        <button id="run_btn" disabled onclick="calculate()" class="w-full bg-slate-400 text-white font-bold py-3 rounded-lg shadow cursor-not-allowed transition">
-            🚀 הרץ חישוב והפק קובץ Excel
+        <button id="run_btn" disabled onclick="calculate()" class="w-full bg-slate-400 text-white font-bold py-3.5 rounded-lg shadow cursor-not-allowed transition text-base">
+            🚀 הרץ חישוב והפק דוחות
         </button>
 
         <div id="result_area" class="mt-8 hidden">
-            <hr class="mb-6">
-            <h2 class="text-xl font-bold text-slate-900 mb-4">📊 תוצאות החישוב</h2>
+            <hr class="mb-6 border-slate-200">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-bold text-slate-900">📊 תוצאות החישוב המסכמות</h2>
+                <div id="as_of_badge" class="bg-indigo-50 border border-indigo-200 text-indigo-800 text-xs px-3 py-1.5 rounded-full font-bold"></div>
+            </div>
+            
             <div id="summary_cards" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6"></div>
-            <a id="download_link" class="block w-full text-center bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-lg shadow transition">
-                📥 הורד קובץ Excel מעוצב (XLSX)
-            </a>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <a id="download_excel_link" class="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 px-4 rounded-lg shadow transition text-center cursor-pointer">
+                    <span>לחץ להורדת אקסל מסכם</span>
+                    <span class="text-xl">📥</span>
+                </a>
+                <button onclick="downloadPDFReport()" class="flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3.5 px-4 rounded-lg shadow transition text-center cursor-pointer">
+                    <span>הורד דוח PDF מסכם</span>
+                    <span class="text-xl">📄</span>
+                </button>
+            </div>
         </div>
     </div>
 
+    <!-- Footer ממותג עם הפנייה למייל -->
+    <footer class="max-w-4xl mx-auto text-center text-xs text-slate-500 py-4 border-t border-slate-200 w-full">
+        <p class="mb-1">מערכת חישוב שנבנתה על ידי <strong>Wise Consulting Group</strong></p>
+        <p>לשאלות, תמיכה והערות מקצועיות ניתן לפנות במייל: <a href="mailto:gilad@wcg.co.il" class="text-blue-600 underline hover:text-blue-800 font-medium">gilad@wcg.co.il</a></p>
+    </footer>
+
     <script>
         let pyodide;
+        let lastCalculationResults = null;
+
+        function showError(msg) {
+            const errBox = document.getElementById('error_box');
+            errBox.innerText = msg;
+            errBox.classList.remove('hidden');
+        }
+
+        function clearError() {
+            const errBox = document.getElementById('error_box');
+            errBox.innerText = '';
+            errBox.classList.add('hidden');
+        }
 
         async function initPyodide() {
             try {
@@ -101,28 +146,32 @@
                 const micropip = pyodide.pyimport("micropip");
                 await micropip.install(['pandas', 'openpyxl']);
 
-                const response = await fetch('engine.py');
+                const cacheBuster = '?v=' + Date.now();
+                const response = await fetch('engine.py' + cacheBuster);
                 if (!response.ok) {
                     throw new Error("לא ניתן למצוא את הקובץ engine.py ברפוזיטורי");
                 }
                 const code = await response.text();
                 pyodide.runPython(code);
 
-                let cpiResp = await fetch('data/cpi.csv');
+                let cpiResp = await fetch('data/cpi.csv' + cacheBuster);
                 if (!cpiResp.ok) {
-                    cpiResp = await fetch('cpi.csv');
+                    cpiResp = await fetch('cpi.csv' + cacheBuster);
                 }
                 if (cpiResp.ok) {
                     const cpiBuf = await cpiResp.arrayBuffer();
                     pyodide.FS.writeFile("cpi.csv", new Uint8Array(cpiBuf));
+                } else {
+                    const defaultCpi = "חודש,מדד בגין\n15/01/1990,151.5\n15/02/1990,152.3\n15/03/1990,154.2";
+                    pyodide.FS.writeFile("cpi.csv", defaultCpi);
                 }
 
-                document.getElementById('status').className = "bg-emerald-50 text-emerald-800 p-4 rounded-lg mb-6 flex items-center gap-3";
+                document.getElementById('status').className = "bg-emerald-50 text-emerald-800 p-4 rounded-lg mb-6 flex items-center gap-3 text-sm";
                 document.getElementById('status').innerHTML = "<span>✓</span><span>מנוע החישוב מוכן לפעולה! אנא העלה קובץ תזרים.</span>";
 
             } catch (err) {
                 console.error("שגיאה בטעינת המערכת:", err);
-                document.getElementById('status').className = "bg-red-50 text-red-800 p-4 rounded-lg mb-6 flex items-center gap-3";
+                document.getElementById('status').className = "bg-red-50 text-red-800 p-4 rounded-lg mb-6 flex items-center gap-3 text-sm";
                 document.getElementById('status').innerHTML = "<span>❌</span><span>שגיאה בטעינת המערכת: " + err.message + "</span>";
             }
         }
@@ -130,32 +179,32 @@
         initPyodide();
 
         async function handleFileSelect() {
+            clearError();
             const fileInput = document.getElementById('cf_file');
             if (!fileInput.files[0]) return;
 
-            const file = fileInput.files[0];
-            const buffer = await file.arrayBuffer();
-            
-            // כתיבת הקובץ למערכת הקבצים הווירטואלית בשם קבוע כדי למנוע בעיות מעבר אובייקטים
-            pyodide.FS.writeFile("uploaded_tx.csv", new Uint8Array(buffer));
+            try {
+                const file = fileInput.files[0];
+                const buffer = await file.arrayBuffer();
+                
+                pyodide.FS.writeFile("uploaded_tx.csv", new Uint8Array(buffer));
 
-            const pyScript = `
-df_temp, cols_list = extract_file_metadata_from_file("uploaded_tx.csv")
-`;
-            pyodide.runPython(pyScript);
+                const jsonStr = pyodide.runPython(`inspect_tx_file("uploaded_tx.csv")`);
+                const cols = JSON.parse(jsonStr);
 
-            const cols = pyodide.globals.get("cols_list").toJs();
+                populateSelect('map_date', cols, ['תאריך', 'date']);
+                populateSelect('map_amount', cols, ['סכום', 'sum', 'amount']);
+                populateSelect('map_type', cols, ['סוג תנועה', 'סוג', 'sug', 'type']);
 
-            populateSelect('map_date', cols, ['תאריך', 'date']);
-            populateSelect('map_amount', cols, ['סכום', 'sum', 'amount']);
-            populateSelect('map_type', cols, ['סוג תנועה', 'סוג', 'sug', 'type']);
+                updateTypeValuesMapping();
 
-            updateTypeValuesMapping();
-
-            document.getElementById('mapping_section').classList.remove('hidden');
-            const btn = document.getElementById('run_btn');
-            btn.disabled = false;
-            btn.className = "w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg shadow cursor-pointer transition";
+                document.getElementById('mapping_section').classList.remove('hidden');
+                const btn = document.getElementById('run_btn');
+                btn.disabled = false;
+                btn.className = "w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg shadow cursor-pointer transition text-base";
+            } catch (err) {
+                showError("שגיאה בקריאת הקובץ שהועלה:\n" + err.message);
+            }
         }
 
         function populateSelect(elemId, items, preferredKeywords = []) {
@@ -179,118 +228,128 @@ df_temp, cols_list = extract_file_metadata_from_file("uploaded_tx.csv")
 
         function updateTypeValuesMapping() {
             const selectedTypeCol = document.getElementById('map_type').value;
-            pyodide.globals.set("selected_type_col", selectedTypeCol);
+            const safeColName = JSON.stringify(selectedTypeCol);
 
-            pyodide.runPython(`type_vals = get_unique_type_values(selected_type_col)`);
-            const uniqueVals = pyodide.globals.get("type_vals").toJs();
+            const jsonStr = pyodide.runPython(`inspect_type_values(${safeColName})`);
+            const uniqueVals = JSON.parse(jsonStr);
 
             populateSelect('map_val_deposit', uniqueVals, ['הפקדה', 'deposit']);
             populateSelect('map_val_withdraw', uniqueVals, ['משיכה', 'withdraw', 'sug']);
         }
 
         async function calculate() {
-            const rate = document.getElementById('annual_rate').value;
-            const freq = document.getElementById('compounding_freq').value;
-            const method = document.getElementById('method').value;
+            clearError();
+            const runBtn = document.getElementById('run_btn');
+            runBtn.disabled = true;
+            runBtn.className = "w-full bg-amber-600 text-white font-bold py-3.5 rounded-lg shadow cursor-not-allowed transition text-base";
+            runBtn.innerText = "⏳ מריץ חישוב, אנא המתן...";
 
-            const colMap = {
-                date: document.getElementById('map_date').value,
-                amount: document.getElementById('map_amount').value,
-                type: document.getElementById('map_type').value
-            };
+            await new Promise(resolve => setTimeout(resolve, 100));
 
-            const typeMap = {
-                deposit: document.getElementById('map_val_deposit').value,
-                withdraw: document.getElementById('map_val_withdraw').value
-            };
-
-            pyodide.globals.set("js_annual_rate", parseFloat(rate));
-            pyodide.globals.set("js_compounding_freq", freq);
-            pyodide.globals.set("js_method", method);
-            pyodide.globals.set("js_col_map_json", JSON.stringify(colMap));
-            pyodide.globals.set("js_type_map_json", JSON.stringify(typeMap));
-
-            const script = `
-import json
-import pandas as pd
-import io
-import openpyxl
-from openpyxl.styles import Alignment
-
-col_map = json.loads(js_col_map_json)
-type_map = json.loads(js_type_map_json)
-
-history, tables = run_full_calculation(
-    "uploaded_tx.csv", 
-    "cpi.csv", 
-    col_map, 
-    type_map,
-    annual_rate=js_annual_rate, 
-    compounding_freq=js_compounding_freq, 
-    method=js_method
-)
-
-last = history[-1]
-tot_debt = last['קרן יתרת סגירה'] + last['ריבית יתרת סגירה'] + last['הפרשי הצמדה קרן יתרת סגירה'] + last['הפרשי הצמדה ריבית יתרת סגירה']
-
-output = io.BytesIO()
-with pd.ExcelWriter(output, engine='openpyxl') as writer:
-    pd.DataFrame(history)[COLUMNS].to_excel(writer, sheet_name='טבלה מאוחדת', index=False)
-    for t_id, t in tables.items():
-        label = f"הפקדה_{t_id}" if t.get('type') == 'deposit' else f"משיכת_יתר_{t_id}"
-        pd.DataFrame(t['rows'])[COLUMNS].to_excel(writer, sheet_name=label, index=False)
-
-output.seek(0)
-wb = openpyxl.load_workbook(output)
-for ws in wb.worksheets:
-    ws.sheet_view.rightToLeft = True
-    ws.freeze_panes = 'B2'
-    for cell in ws[1]:
-        cell.alignment = Alignment(wrap_text=True, horizontal='center', vertical='center')
-    for row in ws.iter_rows(min_row=2, max_row=ws.max_row, max_col=ws.max_column):
-        for cell in row:
-            if cell.column == 1:
-                cell.number_format = 'YYYY-MM-DD'
-            elif cell.column in [2, 3]:
-                cell.number_format = '#,##0.00' if cell.column == 2 else '#,##0'
-            else:
-                cell.number_format = '#,##0.00'
-
-final_out = io.BytesIO()
-wb.save(final_out)
-excel_bytes = final_out.getvalue()
-
-res_summary = {
-    'p': float(last['קרן יתרת סגירה']),
-    'i': float(last['ריבית יתרת סגירה']),
-    'adj': float(last['הפרשי הצמדה קרן יתרת סגירה'] + last['הפרשי הצמדה ריבית יתרת סגירה']),
-    'tot': float(tot_debt)
-}
-`;
             try {
-                pyodide.runPython(script);
+                const rate = document.getElementById('annual_rate').value;
+                const freq = document.getElementById('compounding_freq').value;
+                const method = document.getElementById('method').value;
 
-                const res = pyodide.globals.get('res_summary').toJs();
-                const excelBytes = pyodide.globals.get('excel_bytes').toJs();
+                const params = {
+                    tx_file_path: "uploaded_tx.csv",
+                    cpi_file_path: "cpi.csv",
+                    annual_rate: parseFloat(rate),
+                    compounding_freq: freq,
+                    method: method,
+                    col_map: {
+                        date: document.getElementById('map_date').value,
+                        amount: document.getElementById('map_amount').value,
+                        type: document.getElementById('map_type').value
+                    },
+                    type_map: {
+                        deposit: document.getElementById('map_val_deposit').value,
+                        withdraw: document.getElementById('map_val_withdraw').value
+                    }
+                };
+
+                pyodide.globals.set("js_params_json", JSON.stringify(params));
+                const summaryJsonStr = pyodide.runPython(`run_calculation_json(js_params_json)`);
+                const res = JSON.parse(summaryJsonStr);
+                lastCalculationResults = res;
+
+                const excelBytes = pyodide.FS.readFile("output_results.xlsx");
+
+                document.getElementById('as_of_badge').innerText = `תאריך נכונות: ${res.as_of_date}`;
 
                 document.getElementById('summary_cards').innerHTML = `
-                    <div class="bg-slate-100 p-3 rounded-lg"><div class="text-xs text-slate-500">קרן</div><div class="text-lg font-bold">₪${res.get('p').toLocaleString('he-IL', {minimumFractionDigits:2})}</div></div>
-                    <div class="bg-slate-100 p-3 rounded-lg"><div class="text-xs text-slate-500">ריבית</div><div class="text-lg font-bold">₪${res.get('i').toLocaleString('he-IL', {minimumFractionDigits:2})}</div></div>
-                    <div class="bg-slate-100 p-3 rounded-lg"><div class="text-xs text-slate-500">הפרשי הצמדה</div><div class="text-lg font-bold">₪${res.get('adj').toLocaleString('he-IL', {minimumFractionDigits:2})}</div></div>
-                    <div class="bg-blue-100 p-3 rounded-lg"><div class="text-xs text-blue-600">סה"כ חוב</div><div class="text-lg font-bold text-blue-900">₪${res.get('tot').toLocaleString('he-IL', {minimumFractionDigits:2})}</div></div>
+                    <div class="bg-slate-100 p-3.5 rounded-lg border border-slate-200"><div class="text-xs text-slate-500 mb-1">קרן סגירה</div><div class="text-lg font-bold text-slate-800">₪${res.p.toLocaleString('he-IL', {minimumFractionDigits:2})}</div></div>
+                    <div class="bg-slate-100 p-3.5 rounded-lg border border-slate-200"><div class="text-xs text-slate-500 mb-1">ריבית נצברת</div><div class="text-lg font-bold text-slate-800">₪${res.i.toLocaleString('he-IL', {minimumFractionDigits:2})}</div></div>
+                    <div class="bg-slate-100 p-3.5 rounded-lg border border-slate-200"><div class="text-xs text-slate-500 mb-1">הפרשי הצמדה</div><div class="text-lg font-bold text-slate-800">₪${res.adj.toLocaleString('he-IL', {minimumFractionDigits:2})}</div></div>
+                    <div class="bg-blue-50 p-3.5 rounded-lg border border-blue-200"><div class="text-xs text-blue-600 mb-1">סה"כ חוב/יתרה</div><div class="text-lg font-bold text-blue-900">₪${res.tot.toLocaleString('he-IL', {minimumFractionDigits:2})}</div></div>
                 `;
 
                 const blob = new Blob([excelBytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
                 const url = URL.createObjectURL(blob);
-                const downloadBtn = document.getElementById('download_link');
+                const downloadBtn = document.getElementById('download_excel_link');
                 downloadBtn.href = url;
-                downloadBtn.download = `calculation_results_${method.toLowerCase()}.xlsx`;
+                downloadBtn.download = `wise_consulting_calculation_${method.toLowerCase()}.xlsx`;
 
                 document.getElementById('result_area').classList.remove('hidden');
             } catch (err) {
                 console.error("שגיאה בהרצת החישוב:", err);
-                alert("אירעה שגיאה בביצוע החישוב: " + err.message);
+                showError("❌ אירעה שגיאה בביצוע החישוב:\n" + err.message);
+            } finally {
+                runBtn.disabled = false;
+                runBtn.className = "w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg shadow cursor-pointer transition text-base";
+                runBtn.innerText = "🚀 הרץ חישוב והפק דוחות";
             }
+        }
+
+        function downloadPDFReport() {
+            if (!lastCalculationResults) return;
+
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+            const res = lastCalculationResults;
+
+            // כותרת מותגת Wise Consulting Group
+            doc.setFontSize(20);
+            doc.text("Wise Consulting Group", 20, 20);
+            
+            doc.setFontSize(14);
+            doc.text("Calculation Summary Report", 20, 30);
+            
+            doc.setFontSize(10);
+            doc.text(`As of Date: ${res.as_of_date}`, 20, 40);
+            doc.text(`Annual Rate: ${res.annual_rate}% | Frequency: ${res.compounding_freq} | Method: ${res.method}`, 20, 46);
+
+            doc.setLineWidth(0.5);
+            doc.line(20, 52, 190, 52);
+
+            // טבלת נתונים מסכמת (באנגלית למניעת עיוותי פונט)
+            const tableData = [
+                ["Principal Balance (P)", `ILS ${res.p.toLocaleString('en-US', {minimumFractionDigits:2})}`],
+                ["Accrued Interest (I)", `ILS ${res.i.toLocaleString('en-US', {minimumFractionDigits:2})}`],
+                ["Indexation Differences (CPI)", `ILS ${res.adj.toLocaleString('en-US', {minimumFractionDigits:2})}`],
+                ["TOTAL DEBT / BALANCE", `ILS ${res.tot.toLocaleString('en-US', {minimumFractionDigits:2})}`]
+            ];
+
+            let startY = 62;
+            tableData.forEach(([label, val], idx) => {
+                doc.setFontSize(11);
+                if (idx === 3) {
+                    doc.setFont(undefined, 'bold');
+                } else {
+                    doc.setFont(undefined, 'normal');
+                }
+                doc.text(label, 20, startY);
+                doc.text(val, 140, startY);
+                startY += 10;
+            });
+
+            doc.line(20, startY, 190, startY);
+            doc.setFontSize(8);
+            doc.setFont(undefined, 'italic');
+            doc.text("Generated automatically by Wise Consulting Group Calculator Engine.", 20, startY + 10);
+            doc.text("For inquiries: gilad@wcg.co.il", 20, startY + 15);
+
+            doc.save(`wise_consulting_report_${res.as_of_date.replace(/\//g, '-')}.pdf`);
         }
     </script>
 </body>
