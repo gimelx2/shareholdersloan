@@ -27,82 +27,67 @@ COLUMNS = [
     'הפרשי הצמדה ריבית יתרת סגירה',
 ]
 
-CURRENT_DF_TEMP = None
+SAVED_DF_TX = None
 
 
-def load_df_from_file(file_source):
-  """טוענת קובץ מנתיב/בייטס ומנסה את כל קידודי העברית והמפרידים הנפוצים."""
-  if isinstance(file_source, pd.DataFrame):
-    return file_source
+def read_csv_bulletproof(file_path):
+  """קוראת קובץ CSV מהדיסק הווירטואלי ומנסה את כל קידודי העברית והמפרידים הנפוצים."""
+  with open(file_path, 'rb') as f:
+    raw = f.read()
 
-  if isinstance(file_source, str):
-    with open(file_source, 'rb') as f:
-      raw_bytes = f.read()
-  elif isinstance(file_source, bytes):
-    raw_bytes = file_source
-  elif hasattr(file_source, 'to_py'):
-    raw_bytes = bytes(file_source.to_py())
-  elif isinstance(file_source, (memoryview, bytearray)):
-    raw_bytes = bytes(file_source)
-  else:
-    raw_bytes = bytes(file_source)
+  if raw.startswith(b'\xef\xbb\xbf'):
+    raw = raw[3:]
 
-  encodings = ['utf-8-sig', 'cp1255', 'iso-8859-8', 'utf-8', 'latin1']
+  encodings = ['utf-8-sig', 'cp1255', 'iso-8859-8', 'utf-8', 'utf-16', 'latin1']
   separators = [None, ',', '\t', ';']
 
   for enc in encodings:
     for sep in separators:
       try:
         df = pd.read_csv(
-            io.BytesIO(raw_bytes), sep=sep, engine='python', encoding=enc
+            io.BytesIO(raw), sep=sep, engine='python', encoding=enc
         )
-        if not df.empty and len(df.columns) >= 1:
+        if df is not None and not df.empty and len(df.columns) >= 1:
           cleaned_cols = []
-          for col in df.columns:
-            c_str = str(col).strip()
-            if c_str.startswith('\ufeff'):
-              c_str = c_str[1:]
-            cleaned_cols.append(c_str)
+          for c in df.columns:
+            s = str(c).strip().replace('\ufeff', '')
+            cleaned_cols.append(s)
           df.columns = cleaned_cols
           return df
       except Exception:
         continue
 
   return pd.read_csv(
-      io.BytesIO(raw_bytes), sep=None, engine='python', encoding='iso-8859-8'
+      io.BytesIO(raw), sep=None, engine='python', encoding='iso-8859-8'
   )
 
 
-def extract_file_metadata_from_file(file_path):
-  """חילוץ כותרות עמודות לצורך הממשק הדינמי."""
-  global CURRENT_DF_TEMP
-  CURRENT_DF_TEMP = load_df_from_file(file_path)
-  cols = [str(c).strip() for c in CURRENT_DF_TEMP.columns]
-  return CURRENT_DF_TEMP, cols
+def inspect_tx_file(tx_file_path):
+  global SAVED_DF_TX
+  SAVED_DF_TX = read_csv_bulletproof(tx_file_path)
+  cols = [str(c) for c in SAVED_DF_TX.columns]
+  return json.dumps(cols, ensure_ascii=False)
 
 
-def get_unique_type_values(col_name):
-  """חילוץ ערכים ייחודיים מעמודת סוג התנועה."""
-  global CURRENT_DF_TEMP
-  if CURRENT_DF_TEMP is None or col_name not in CURRENT_DF_TEMP.columns:
-    return []
+def inspect_type_values(type_col_name):
+  global SAVED_DF_TX
+  if SAVED_DF_TX is None or type_col_name not in SAVED_DF_TX.columns:
+    return json.dumps([], ensure_ascii=False)
   vals = (
-      CURRENT_DF_TEMP[col_name]
+      SAVED_DF_TX[type_col_name]
       .dropna()
       .astype(str)
       .str.strip()
       .unique()
       .tolist()
   )
-  return [v for v in vals if v]
+  return json.dumps([v for v in vals if v], ensure_ascii=False)
 
 
 def clean_input_data(df_tx, df_cpi, col_map, type_map):
-  """מנרמלת את הנתונים לפי המיפוי שהתקבל מהממשק."""
   df_tx = df_tx.copy()
   df_cpi = df_cpi.copy()
 
-  # ניקוי CPI
   df_cpi.columns = [str(col).strip() for col in df_cpi.columns]
   cpi_month_col = [
       col
@@ -120,14 +105,55 @@ def clean_input_data(df_tx, df_cpi, col_map, type_map):
   if cpi_val_col:
     df_cpi = df_cpi.rename(columns={cpi_val_col[0]: 'מדד בגין'})
 
-  # מיפוי עמודות תזרים
+  date_col = col_map.get('date')
+  amt_col = col_map.get('amount')
+  type_col = col_map.get('type')
+
+  if not date_col or date_col not in df_tx.columns:
+    raise ValueError(f"עמודת התאריך '{date_col}' לא נמצאה בקובץ.")
+  if not amt_col or amt_col not in df_tx.columns:
+    raise ValueError(f"עמודת הסכום '{amt_col}' לא נמצאה בקובץ.")
+  if not type_col or type_col not in df_tx.columns:
+    raise ValueError(f"עמודת סוג התנועה '{type_col}' לא נמצאה בקובץ.")
+
   df_tx = df_tx.rename(
-      columns={
-          col_map['date']: 'תאריך',
-          col_map['amount']: 'סכום',
-          col_map['type']: 'סוג תנועה',
-      }
+      columns={date_col: 'תאריך', amt_col: 'סכום', type_col: 'סוג תנועה'}
   )
+
+  if df_tx['סכום'].dtype == 'object':
+    df_tx['סכום'] = (
+        df_tx['סכום']
+        .astype(str)
+        .str.replace('₪', '', regex=False)
+        .str.replace(',', '', regex=False)
+        .str.strip()
+        .astype(float)
+    )
+  else:
+    df_tx['סכום'] = df_tx['סכום'].astype(float)
+
+  if df_cpi['מדד בגין'].dtype == 'object':
+    df_cpi['מדד בגין'] = (
+        df_cpi['מדד בגין']
+        .astype(str)
+        .str.replace(',', '', regex=False)
+        .str.strip()
+        .astype(float)
+    )
+  else:
+    df_cpi['מדד בגין'] = df_cpi['מדד בגין'].astype(float)
+
+  df_tx['תאריך'] = pd.to_datetime(
+      df_tx['תאריך'], dayfirst=True, errors='coerce'
+  ).dt.date
+  df_tx = df_tx.dropna(subset=['תאריך'])
+  if df_tx.empty:
+    raise ValueError("לא נמצאו תאריכים תקינים בקובץ התזרים.")
+
+  df_cpi['חודש'] = pd.to_datetime(
+      df_cpi['חודש'], dayfirst=True, errors='coerce'
+  ).dt.date
+  df_cpi = df_cpi.dropna(subset=['חודש'])
 
   dep_val = str(type_map.get('deposit', '')).strip()
   wth_val = str(type_map.get('withdraw', '')).strip()
@@ -138,32 +164,15 @@ def clean_input_data(df_tx, df_cpi, col_map, type_map):
       return 'הפקדה'
     elif s_val == wth_val:
       return 'משיכה'
-    if 'הפקדה' in s_val or 'deposit' in s_val.lower():
+    if any(k in s_val.lower() for k in ['הפקדה', 'deposit', 'זכות', 'cr']):
       return 'הפקדה'
-    if 'משיכה' in s_val or 'withdraw' in s_val.lower():
+    if any(
+        k in s_val.lower() for k in ['משיכה', 'withdraw', 'חובה', 'dr', 'סילוק']
+    ):
       return 'משיכה'
-    return s_val
+    return 'הפקדה'
 
   df_tx['סוג תנועה'] = df_tx['סוג תנועה'].apply(map_sug)
-
-  # המרת תאריכים
-  df_tx['תאריך'] = pd.to_datetime(df_tx['תאריך'], dayfirst=True).dt.date
-  df_cpi['חודש'] = pd.to_datetime(df_cpi['חודש'], dayfirst=True).dt.date
-
-  # המרת סכומים ומדדים
-  if df_tx['סכום'].dtype == 'object':
-    df_tx['סכום'] = (
-        df_tx['סכום'].astype(str).str.replace(',', '').astype(float)
-    )
-  else:
-    df_tx['סכום'] = df_tx['סכום'].astype(float)
-
-  if df_cpi['מדד בגין'].dtype == 'object':
-    df_cpi['מדד בגין'] = (
-        df_cpi['מדד בגין'].astype(str).str.replace(',', '').astype(float)
-    )
-  else:
-    df_cpi['מדד בגין'] = df_cpi['מדד בגין'].astype(float)
 
   df_tx = df_tx.sort_values('תאריך').reset_index(drop=True)
   df_cpi = df_cpi.sort_values('חודש').reset_index(drop=True)
@@ -287,15 +296,17 @@ def allocate_waterfall(df_summary, pmt_amount, method='FIFO'):
   return df_alloc, rem
 
 
-def run_full_calculation(
-    tx_file_path,
-    cpi_file_path,
-    col_map,
-    type_map,
-    annual_rate=6.0,
-    compounding_freq='חודשית',
-    method='FIFO',
-):
+def run_calculation_json(params_json):
+  params = json.loads(params_json)
+
+  tx_file_path = params['tx_file_path']
+  cpi_file_path = params['cpi_file_path']
+  col_map = params['col_map']
+  type_map = params['type_map']
+  annual_rate = float(params['annual_rate'])
+  compounding_freq = params['compounding_freq']
+  method = params['method']
+
   r = annual_rate / 100.0
   if compounding_freq == 'יומית':
     r_daily = r / 365.0
@@ -306,8 +317,8 @@ def run_full_calculation(
   elif compounding_freq == 'שנתית':
     r_daily = ((1.0 + r) ** (1.0 / 365.0)) - 1.0
 
-  df_tx = load_df_from_file(tx_file_path)
-  df_cpi = load_df_from_file(cpi_file_path)
+  df_tx = read_csv_bulletproof(tx_file_path)
+  df_cpi = read_csv_bulletproof(cpi_file_path)
 
   df_tx, df_cpi = clean_input_data(df_tx, df_cpi, col_map, type_map)
 
@@ -572,4 +583,63 @@ def run_full_calculation(
 
     prev_timeline_dt = dt
 
-  return consolidated_history, tables
+  output_path = 'output_results.xlsx'
+  with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+    pd.DataFrame(consolidated_history)[COLUMNS].to_excel(
+        writer, sheet_name='טבלה מאוחדת', index=False
+    )
+    for t_id, t in tables.items():
+      label = (
+          f'הפקדה_{t_id}'
+          if t.get('type') == 'deposit'
+          else f'משיכת_יתר_{t_id}'
+      )
+      pd.DataFrame(t['rows'])[COLUMNS].to_excel(
+          writer, sheet_name=label, index=False
+      )
+
+  wb = openpyxl.load_workbook(output_path)
+  for ws in wb.worksheets:
+    ws.sheet_view.rightToLeft = True
+    ws.freeze_panes = 'B2'
+    for cell in ws[1]:
+      cell.alignment = Alignment(
+          wrap_text=True, horizontal='center', vertical='center'
+      )
+    for row in ws.iter_rows(
+        min_row=2, max_row=ws.max_row, max_col=ws.max_column
+    ):
+      for cell in row:
+        if cell.column == 1:
+          cell.number_format = 'YYYY-MM-DD'
+        elif cell.column in [2, 3]:
+          cell.number_format = '#,##0.00' if cell.column == 2 else '#,##0'
+        else:
+          cell.number_format = '#,##0.00'
+
+  wb.save(output_path)
+
+  last = consolidated_history[-1]
+  as_of_date_str = pd.to_datetime(last['תאריך']).strftime('%d/%m/%Y')
+  tot_debt = (
+      last['קרן יתרת סגירה']
+      + last['ריבית יתרת סגירה']
+      + last['הפרשי הצמדה קרן יתרת סגירה']
+      + last['הפרשי הצמדה ריבית יתרת סגירה']
+  )
+
+  summary = {
+      'as_of_date': as_of_date_str,
+      'p': float(last['קרן יתרת סגירה']),
+      'i': float(last['ריבית יתרת סגירה']),
+      'adj': float(
+          last['הפרשי הצמדה קרן יתרת סגירה']
+          + last['הפרשי הצמדה ריבית יתרת סגירה']
+      ),
+      'tot': float(tot_debt),
+      'annual_rate': annual_rate,
+      'compounding_freq': compounding_freq,
+      'method': method,
+  }
+
+  return json.dumps(summary, ensure_ascii=False)
