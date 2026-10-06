@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>מחשבון הצמדה וריבית - ניהול שכבות</title>
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.25.0/full/pyodide.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans p-6">
+    <div class="max-w-4xl mx-auto bg-white shadow-xl rounded-xl p-8 border border-slate-200">
+        <h1 class="text-3xl font-bold text-slate-900 mb-2">📈 מחשבון הצמדה וריבית - ניהול שכבות</h1>
+        <p class="text-slate-600 mb-6">מערכת חישוב עצמאית הפועלת בדפדפן - ללא העברת נתונים לשרת חיצוני.</p>
+
+        <div id="status" class="bg-blue-50 text-blue-800 p-4 rounded-lg mb-6 flex items-center gap-3">
+            <span class="animate-spin text-xl">⏳</span>
+            <span>טוען מנוע Python וספריות חישוב בדפדפן... אנא המתן.</span>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+            <div>
+                <label class="block font-medium text-slate-700 mb-1">שיעור ריבית שנתית (%)</label>
+                <input type="number" id="annual_rate" value="6.0" step="0.1" class="w-full border border-slate-300 rounded-lg p-2.5">
+            </div>
+            <div>
+                <label class="block font-medium text-slate-700 mb-1">תדירות חישוב הריבית</label>
+                <select id="compounding_freq" class="w-full border border-slate-300 rounded-lg p-2.5 bg-white">
+                    <option value="חודשית">חודשית</option>
+                    <option value="יומית">יומית</option>
+                    <option value="רבעונית">רבעונית</option>
+                    <option value="שנתית">שנתית</option>
+                </select>
+            </div>
+            <div>
+                <label class="block font-medium text-slate-700 mb-1">שיטת סילוק משיכות</label>
+                <select id="method" class="w-full border border-slate-300 rounded-lg p-2.5 bg-white">
+                    <option value="FIFO">FIFO (מהישן לחדש)</option>
+                    <option value="LIFO">LIFO (מהחדש לישן)</option>
+                </select>
+            </div>
+            <div>
+                <label class="block font-medium text-slate-700 mb-1">קובץ תזרים (cf.csv)</label>
+                <input type="file" id="cf_file" accept=".csv" class="w-full border border-slate-300 rounded-lg p-2 bg-white">
+            </div>
+        </div>
+
+        <button id="run_btn" disabled onclick="calculate()" class="w-full bg-slate-400 text-white font-bold py-3 rounded-lg shadow cursor-not-allowed transition">
+            🚀 הרץ חישוב והפק קובץ Excel
+        </button>
+
+        <div id="result_area" class="mt-8 hidden">
+            <hr class="mb-6">
+            <h2 class="text-xl font-bold text-slate-900 mb-4">📊 תוצאות החישוב</h2>
+            <div id="summary_cards" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6"></div>
+            <a id="download_link" class="block w-full text-center bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-lg shadow">
+                📥 הורד קובץ Excel מעוצב (XLSX)
+            </a>
+        </div>
+    </div>
+
+    <script>
+        let pyodide;
+
+        async function initPyodide() {
+            pyodide = await loadPyodide();
+            await pyodide.loadPackage(["pandas", "openpyxl"]);
+            
+            // טעינת engine.py
+            const response = await fetch('engine.py');
+            const code = await response.text();
+            pyodide.runPython(code);
+
+            // טעינת cpi.csv ברירת מחדל
+            const cpiResp = await fetch('data/cpi.csv');
+            const cpiCsv = await cpiResp.text();
+            pyodide.FS.writeFile("cpi.csv", cpiCsv);
+
+            document.getElementById('status').className = "bg-emerald-50 text-emerald-800 p-4 rounded-lg mb-6";
+            document.getElementById('status').innerHTML = "✓ מנוע החישוב מוכן לפעולה!";
+            
+            const btn = document.getElementById('run_btn');
+            btn.disabled = false;
+            btn.className = "w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg shadow cursor-pointer transition";
+        }
+
+        initPyodide();
+
+        async function calculate() {
+            const fileInput = document.getElementById('cf_file');
+            if (!fileInput.files[0]) {
+                alert("אנא בחר קובץ cf.csv לתזרימים");
+                return;
+            }
+
+            const cfText = await fileInput.files[0].text();
+            pyodide.FS.writeFile("cf.csv", cfText);
+
+            const rate = document.getElementById('annual_rate').value;
+            const freq = document.getElementById('compounding_freq').value;
+            const method = document.getElementById('method').value;
+
+            const script = `
+import pandas as pd
+import io
+import openpyxl
+from openpyxl.styles import Alignment
+
+df_tx = pd.read_csv("cf.csv", encoding="iso-8859-8")
+df_cpi = pd.read_csv("cpi.csv", encoding="iso-8859-8")
+
+history, tables = run_full_calculation(
+    df_tx, df_cpi, 
+    annual_rate=${rate}, 
+    compounding_freq='${freq}', 
+    method='${method}'
+)
+
+last = history[-1]
+tot_debt = last['קרן יתרת סגירה'] + last['ריבית יתרת סגירה'] + last['הפרשי הצמדה קרן יתרת סגירה'] + last['הפרשי הצמדה ריבית יתרת סגירה']
+
+# יצירת Excel בזיכרון
+output = io.BytesIO()
+with pd.ExcelWriter(output, engine='openpyxl') as writer:
+    pd.DataFrame(history)[COLUMNS].to_excel(writer, sheet_name='טבלה מאוחדת', index=False)
+    for t_id, t in tables.items():
+        label = f"הפקדה_{t_id}" if t.get('type') == 'deposit' else f"משיכת_יתר_{t_id}"
+        pd.DataFrame(t['rows'])[COLUMNS].to_excel(writer, sheet_name=label, index=False)
+
+output.seek(0)
+wb = openpyxl.load_workbook(output)
+for ws in wb.worksheets:
+    ws.sheet_view.rightToLeft = True
+    ws.freeze_panes = 'B2'
+    for cell in ws[1]:
+        cell.alignment = Alignment(wrap_text=True, horizontal='center', vertical='center')
+    for row in ws.iter_rows(min_row=2, max_row=ws.max_row, max_col=ws.max_column):
+        for cell in row:
+            if cell.column == 1:
+                cell.number_format = 'YYYY-MM-DD'
+            elif cell.column in [2, 3]:
+                cell.number_format = '#,##0.00' if cell.column == 2 else '#,##0'
+            else:
+                cell.number_format = '#,##0.00'
+
+final_out = io.BytesIO()
+wb.save(final_out)
+excel_bytes = final_out.getvalue()
+
+res_summary = {
+    'p': last['קרן יתרת סגירה'],
+    'i': last['ריבית יתרת סגירה'],
+    'adj': last['הפרשי הצמדה קרן יתרת סגירה'] + last['הפרשי הצמדה ריבית יתרת סגירה'],
+    'tot': tot_debt
+}
+`;
+            pyodide.runPython(script);
+
+            const res = pyodide.globals.get('res_summary').toJs();
+            const excelBytes = pyodide.globals.get('excel_bytes').toJs();
+
+            // הצגת כרטיסיות סיכום
+            document.getElementById('summary_cards').innerHTML = `
+                <div class="bg-slate-100 p-3 rounded-lg"><div class="text-xs text-slate-500">קרן</div><div class="text-lg font-bold">₪${res.get('p').toLocaleString('he-IL', {minimumFractionDigits:2})}</div></div>
+                <div class="bg-slate-100 p-3 rounded-lg"><div class="text-xs text-slate-500">ריבית</div><div class="text-lg font-bold">₪${res.get('i').toLocaleString('he-IL', {minimumFractionDigits:2})}</div></div>
+                <div class="bg-slate-100 p-3 rounded-lg"><div class="text-xs text-slate-500">הפרשי הצמדה</div><div class="text-lg font-bold">₪${res.get('adj').toLocaleString('he-IL', {minimumFractionDigits:2})}</div></div>
+                <div class="bg-blue-100 p-3 rounded-lg"><div class="text-xs text-blue-600">סה"כ חוב</div><div class="text-lg font-bold text-blue-900">₪${res.get('tot').toLocaleString('he-IL', {minimumFractionDigits:2})}</div></div>
+            `;
+
+            // הכנת קישור להורדת Excel
+            const blob = new Blob([excelBytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+            const url = URL.createObjectURL(blob);
+            const downloadBtn = document.getElementById('download_link');
+            downloadBtn.href = url;
+            downloadBtn.download = `calculation_results_${method}.xlsx`;
+
+            document.getElementById('result_area').classList.remove('hidden');
+        }
+    </script>
+</body>
+</html>
