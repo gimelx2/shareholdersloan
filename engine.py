@@ -229,9 +229,11 @@ def build_timeline(min_date, max_date, tx_dates):
   return timeline
 
 
-def get_consolidated_state(tables):
+def get_consolidated_state(tables, filter_type=None):
   rows = []
   for t_id, t in tables.items():
+    if filter_type and t.get('type') != filter_type:
+      continue
     tot = t['p'] + t['i'] + t['adj_p'] + t['adj_i']
     if abs(tot) > 0.0001:
       rows.append({
@@ -335,7 +337,7 @@ def run_calculation_json(params_json):
     day_txs = df_tx[df_tx['תאריך'] == dt]
     days_from_prev = (dt - prev_timeline_dt).days if prev_timeline_dt else 0
 
-    # 1. חישוב צבירות תקופתיות לכל השכבות הקימות (עד ליום החישוב הנוכחי)
+    # 1. צבירות תקופתיות לפני סילוקים (לתאריך הנוכחי)
     for t_id, t in tables.items():
       if dt <= t['last_dt']:
         continue
@@ -368,17 +370,19 @@ def run_calculation_json(params_json):
         t['last_dt'] = dt
         continue
 
-      # צבירת ריבית לא-מוצמדת
+      # צבירת ריבית
       new_i = t['p'] * (((1.0 + r_daily) ** days) - 1.0)
       closing_i_unadjusted = t['i'] + new_i
 
-      # הצמדה מצטברת מיום יצירת השכבה المקורי
+      # הצמדה מצטברת מיום יצירת השכבה המקורי
       base_idx = t['base_idx']
       cum_idx_factor = (idx / base_idx) - 1.0 if base_idx > 0 else 0.0
 
+      # חישוב הצמדה מצטברת מדויקת עבור הקרן והריבית בסוף התקופה
       target_adj_p_closing = t['p'] * cum_idx_factor
       target_adj_i_closing = closing_i_unadjusted * cum_idx_factor
 
+      # גזירת תנועות הצבירה התקופתיות כמשלים (Plug)
       new_adj_p = target_adj_p_closing - t['adj_p']
       new_adj_i = target_adj_i_closing - t['adj_i']
 
@@ -410,24 +414,23 @@ def run_calculation_json(params_json):
       t['last_dt'] = dt
       t['last_idx'] = idx
 
-    # 2. הזרמת התזרימים של היום והפעלת ה-Waterfall בסוף התקופה (לאחר הצבירה)
+    # 2. הזרמת התזרימים של היום (משיכות / הפקדות)
     for _, tx in day_txs.iterrows():
       tx_type = str(tx['סוג תנועה']).strip()
       amt = abs(float(tx['סכום']))
-      df_summary = get_consolidated_state(tables)
 
       if 'משיכה' in tx_type or 'withdraw' in tx_type:
-        # אם יש חוב/יתרות זכות חיוביות, מפעילים Waterfall לסילוק
-        if not df_summary.empty and df_summary['tot'].sum() > 0:
+        # משיכה מסלקת קודם כל שכבות הפקדה חיוביות קיימות
+        df_deposits = get_consolidated_state(tables, filter_type='deposit')
+        if not df_deposits.empty and df_deposits['tot'].sum() > 0:
           df_alloc, rem_surplus = allocate_waterfall(
-              df_summary, amt, method=method
+              df_deposits, amt, method=method
           )
           for _, row in df_alloc.iterrows():
             t_id = int(row['tranche_id'])
             t = tables[t_id]
             r_dict = t.get('pending_row', t['rows'][-1])
 
-            # סילוק בסוף התקופה על היתרות הצבורות
             r_dict['סילוק ריבית'] += row['pay_i']
             r_dict['סילוק הפרשי הצמדה ריבית'] += row['pay_adj_i']
             r_dict['סילוק הפרשי הצמדה קרן'] += row['pay_adj_p']
@@ -444,7 +447,7 @@ def run_calculation_json(params_json):
         else:
           rem_surplus = amt
 
-        # יתרת משיכה בלתי-מסולקת פותחת שכבת משיכת יתר (Overdraft)
+        # במידה ונשאר עודף משיכה בלתי מסולק -> פותחים שכבת משיכת יתר (Overdraft)
         if rem_surplus > 0.0001:
           tranche_counter += 1
           tables[tranche_counter] = {
@@ -480,10 +483,11 @@ def run_calculation_json(params_json):
           }
 
       elif 'הפקדה' in tx_type or 'deposit' in tx_type:
-        # אם יש שכבות משיכת יתר שליליות, ההפקדה מסלקת אותן תחילה
-        if not df_summary.empty and df_summary['tot'].sum() < 0:
+        # הפקדה מסלקת קודם כל שכבות משיכת יתר (Overdraft) שליליות
+        df_overdrafts = get_consolidated_state(tables, filter_type='overdraft')
+        if not df_overdrafts.empty and abs(df_overdrafts['tot'].sum()) > 0:
           df_alloc, rem_surplus = allocate_waterfall(
-              df_summary, amt, method=method
+              df_overdrafts, amt, method=method
           )
           for _, row in df_alloc.iterrows():
             t_id = int(row['tranche_id'])
@@ -506,7 +510,7 @@ def run_calculation_json(params_json):
         else:
           rem_surplus = amt
 
-        # יתרת הפקדה פותחת שכבת הפקדה רגילה (Deposit)
+        # במידה ונשאר עודף הפקדה -> פותחים שכבת הפקדה חיובית (Deposit)
         if rem_surplus > 0.0001:
           tranche_counter += 1
           tables[tranche_counter] = {
@@ -541,7 +545,7 @@ def run_calculation_json(params_json):
               }],
           }
 
-    # שמירת השורות שהסתיימו בפרק הזמן
+    # שמירת השורות לתום יום החישוב
     for t in tables.values():
       if 'pending_row' in t:
         t['rows'].append(t['pending_row'])
