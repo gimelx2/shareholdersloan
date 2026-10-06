@@ -378,7 +378,7 @@ def run_calculation_json(params_json):
         t['last_dt'] = dt
         continue
 
-      # צבירת ריבית לא-מוצמדת
+      # צבירת ריבית לא-מוצמדת לתקופה
       new_i = t['p'] * (((1.0 + r_daily) ** days) - 1.0)
       closing_i_unadjusted = t['i'] + new_i
 
@@ -388,14 +388,16 @@ def run_calculation_json(params_json):
       target_adj_p_closing = t['p'] * cum_idx_factor
       new_adj_p = target_adj_p_closing - t['adj_p']
 
-      # 1.2 הצמדת הריבית (שרשור מדדים תקופתי + הצמדת הריבית החדשה):
-      # א' - קידום יתרת הריבית הקיימת הצמודה (i + adj_i) בשינוי המדד של התקופה הנוכחית בלבד!
-      period_idx_factor = (idx / t['last_idx']) - 1.0 if t['last_idx'] > 0 else 0.0
+      # 1.2 הצמדת הריבית:
+      # א' - על רכיב הריבית הקיימת והפרשי ההצמדה בגינה: הצמדה מהמדד הקודם (last_idx) למועד הנוכחי (idx)
+      prev_idx = t['last_idx']
+      period_idx_factor = (idx / prev_idx) - 1.0 if prev_idx > 0 else 0.0
       adj_existing_i = (t['i'] + t['adj_i']) * period_idx_factor
 
-      # ב' - הצמדת הריבית החדשה שנצברה בתקופה (new_i) מיום בסיס השכבה המקורי
+      # ב' - על רכיב הריבית החדשה שנצברה בתקופה (new_i): הצמדה ממדד הבסיס של השכבה (base_idx) למועד הנוכחי (idx)
       adj_new_i = new_i * cum_idx_factor
 
+      # סך צבירת הפרשי הצמדה ריבית לתקופה
       new_adj_i = adj_existing_i + adj_new_i
       target_adj_i_closing = t['adj_i'] + new_adj_i
 
@@ -684,7 +686,7 @@ def run_calculation_json(params_json):
           '3. מנוע ההצמדה למדד (CPI):',
           'ההצמדה מחושבת על בסיס מדד המחירים לצרכן הידוע. הצמדת הקרן מחושבת'
           ' מיום הבסיס/הסילוק האחרון, והצמדת הריבית מורכבת מקידום תקופתי של'
-          ' היתרה הצמודה + הצמדת הריבית החדשה שנצברה.',
+          ' היתרה הצמודה הקיימת + הצמדת הריבית החדשה שנצברה בתקופה.',
       ),
       (
           '4. משיכות יתר (Overdraft):',
