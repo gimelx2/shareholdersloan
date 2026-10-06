@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>מחשבון הצמדה וריבית - ניהול שכבות</title>
     <script src="https://cdn.jsdelivr.net/pyodide/v0.25.0/full/pyodide.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css">
 </head>
 <body class="bg-slate-50 text-slate-800 font-sans p-6">
     <div class="max-w-4xl mx-auto bg-white shadow-xl rounded-xl p-8 border border-slate-200">
@@ -63,10 +63,10 @@
 
         async function initPyodide() {
             try {
-                // 1. טעינת Pyodide
+                // 1. טעינת Pyodide בסיסי
                 pyodide = await loadPyodide();
 
-                // 2. התקנת micropip והתקנת ספריות pandas ו-openpyxl
+                // 2. טעינת micropip והתקנת pandas ו-openpyxl דרכו
                 await pyodide.loadPackage("micropip");
                 const micropip = pyodide.pyimport("micropip");
                 await micropip.install(['pandas', 'openpyxl']);
@@ -88,10 +88,10 @@
                     const cpiCsv = await cpiResp.text();
                     pyodide.FS.writeFile("cpi.csv", cpiCsv);
                 } else {
-                    console.warn("קובץ cpi.csv לא נמצא בשרת, תתאפשר טעינה ידנית בעת הצורך");
+                    console.warn("קובץ cpi.csv לא נמצא, תתאפשר טעינה ידנית בעת הצורך");
                 }
 
-                // עדכון סטטוס הצלחה
+                // עדכון הממשק שהטעינה הושלמה בהצלחה
                 document.getElementById('status').className = "bg-emerald-50 text-emerald-800 p-4 rounded-lg mb-6 flex items-center gap-3";
                 document.getElementById('status').innerHTML = "<span>✓</span><span>מנוע החישוב וספריות ה-Excel מוכנים לפעולה!</span>";
                 
@@ -128,7 +128,6 @@ import io
 import openpyxl
 from openpyxl.styles import Alignment
 
-# ניסיון קריאה גמיש לתמיכה בקידודי אקסל בעברית
 try:
     df_tx = pd.read_csv("cf.csv", encoding="iso-8859-8")
 except:
@@ -149,7 +148,6 @@ history, tables = run_full_calculation(
 last = history[-1]
 tot_debt = last['קרן יתרת סגירה'] + last['ריבית יתרת סגירה'] + last['הפרשי הצמדה קרן יתרת סגירה'] + last['הפרשי הצמדה ריבית יתרת סגירה']
 
-# יצירת קובץ Excel בזיכרון
 output = io.BytesIO()
 with pd.ExcelWriter(output, engine='openpyxl') as writer:
     pd.DataFrame(history)[COLUMNS].to_excel(writer, sheet_name='טבלה מאוחדת', index=False)
@@ -190,7 +188,6 @@ res_summary = {
                 const res = pyodide.globals.get('res_summary').toJs();
                 const excelBytes = pyodide.globals.get('excel_bytes').toJs();
 
-                // הצגת כרטיסיות סיכום
                 document.getElementById('summary_cards').innerHTML = `
                     <div class="bg-slate-100 p-3 rounded-lg"><div class="text-xs text-slate-500">קרן</div><div class="text-lg font-bold">₪${res.get('p').toLocaleString('he-IL', {minimumFractionDigits:2})}</div></div>
                     <div class="bg-slate-100 p-3 rounded-lg"><div class="text-xs text-slate-500">ריבית</div><div class="text-lg font-bold">₪${res.get('i').toLocaleString('he-IL', {minimumFractionDigits:2})}</div></div>
@@ -198,7 +195,6 @@ res_summary = {
                     <div class="bg-blue-100 p-3 rounded-lg"><div class="text-xs text-blue-600">סה"כ חוב</div><div class="text-lg font-bold text-blue-900">₪${res.get('tot').toLocaleString('he-IL', {minimumFractionDigits:2})}</div></div>
                 `;
 
-                // הכנת קישור להורדת קובץ ה-Excel
                 const blob = new Blob([excelBytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
                 const url = URL.createObjectURL(blob);
                 const downloadBtn = document.getElementById('download_link');
