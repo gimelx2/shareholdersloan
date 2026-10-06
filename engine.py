@@ -46,14 +46,14 @@ def clean_input_data(df_tx, df_cpi):
       break
 
   if date_col is None:
-    # מקרה קצה: אם כל השורה נקראה כעמודה אחת עקב תו הפרדה לא תואם
     first_col = df_tx.columns[0]
     if '\t' in first_col or ';' in first_col:
       sep = '\t' if '\t' in first_col else ';'
-      # פיצול מחדש במידה וההפרדה הייתה שגויה
       df_tx = pd.read_csv(io.StringIO(df_tx.to_csv(index=False)), sep=sep)
       df_tx.columns = [str(c).strip() for c in df_tx.columns]
-      date_col = [c for c in df_tx.columns if 'תאריך' in c or 'date' in c.lower()][0]
+      date_col = [
+          c for c in df_tx.columns if 'תאריך' in c or 'date' in c.lower()
+      ][0]
     else:
       raise KeyError(
           f"לא נמצאה עמודת 'תאריך'. העמודות שנמצאו בקובץ: {list(df_tx.columns)}"
