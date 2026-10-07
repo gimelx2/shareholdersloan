@@ -378,11 +378,11 @@ def run_calculation_json(params_json):
         t['last_dt'] = dt
         continue
 
-      # שמיקת יתרות פתיחה לתקופה
+      # שריון יתרות הפתיחה לתקופה הנוכחית לפני כל עדכון!
       i_start = t['i']
       adj_i_start = t['adj_i']
 
-      # צבירת ריבית לא-מוצמדת לתקופה הנוכחית
+      # צבירת ריבית לא-מוצמדת לתקופה
       new_i = t['p'] * (((1.0 + r_daily) ** days) - 1.0)
       closing_i_unadjusted = i_start + new_i
 
@@ -393,7 +393,7 @@ def run_calculation_json(params_json):
       new_adj_p = target_adj_p_closing - t['adj_p']
 
       # 1.2 הצמדת הריבית במדויק:
-      # א' - על יתרת הריבית הקיימת והפרשי ההצמדה בגינה (i_start + adj_i_start):
+      # א' - על יתרת הפתיחה של הריבית + הפרשי ההצמדה בגינה (i_start + adj_i_start):
       # הצמדה מהמדד הקודם (last_idx) למועד הנוכחי (idx)
       prev_idx = t['last_idx']
       period_idx_factor = (idx / prev_idx) - 1.0 if prev_idx > 0 else 0.0
@@ -403,7 +403,7 @@ def run_calculation_json(params_json):
       # הצמדה ממדד הבסיס של השכבה (base_idx) למועד הנוכחי (idx)
       adj_new_i = new_i * cum_idx_factor
 
-      # סך צבירת הפרשי הצמדה ריבית לתקופה
+      # סך צבירת הפרשי הצמדה ריבית לתקופה הנוכחית
       new_adj_i = adj_existing_i + adj_new_i
       target_adj_i_closing = adj_i_start + new_adj_i
 
