@@ -378,32 +378,30 @@ def run_calculation_json(params_json):
         t['last_dt'] = dt
         continue
 
-      # שריון יתרות הפתיחה לתקופה הנוכחית לפני כל עדכון!
+      # שריון יתרות פתיחה של התקופה
       i_start = t['i']
       adj_i_start = t['adj_i']
 
-      # צבירת ריבית לא-מוצמדת לתקופה
+      # א. צבירת ריבית לא-מוצמדת לתקופה
       new_i = t['p'] * (((1.0 + r_daily) ** days) - 1.0)
       closing_i_unadjusted = i_start + new_i
 
-      # 1.1 הצמדת הקרן מיום בסיס השכבה (base_idx)
+      # ב. הצמדת הקרן מיום בסיס השכבה (base_idx)
       base_idx = t['base_idx']
       cum_idx_factor = (idx / base_idx) - 1.0 if base_idx > 0 else 0.0
       target_adj_p_closing = t['p'] * cum_idx_factor
       new_adj_p = target_adj_p_closing - t['adj_p']
 
-      # 1.2 הצמדת הריבית במדויק:
-      # א' - על יתרת הפתיחה של הריבית + הפרשי ההצמדה בגינה (i_start + adj_i_start):
-      # הצמדה מהמדד הקודם (last_idx) למועד הנוכחי (idx)
+      # ג. הצמדת הריבית מופרדת במדויק:
+      # 1) יתרת הפתיחה של הריבית + יתרת הפתיחה של הצמדת הריבית מיוחסות למדד הקודם (last_idx) לזה הנוכחי (idx)
       prev_idx = t['last_idx']
       period_idx_factor = (idx / prev_idx) - 1.0 if prev_idx > 0 else 0.0
       adj_existing_i = (i_start + adj_i_start) * period_idx_factor
 
-      # ב' - על הריבית החדשה שנצברה בתקופה (new_i):
-      # הצמדה ממדד הבסיס של השכבה (base_idx) למועד הנוכחי (idx)
+      # 2) הריבית החדשה שנצברה בתקופה (new_i) מוצמדת ממדד הבסיס של השכבה (base_idx) למדד הנוכחי (idx)
       adj_new_i = new_i * cum_idx_factor
 
-      # סך צבירת הפרשי הצמדה ריבית לתקופה הנוכחית
+      # סך צבירת הפרשי ההצמדה לריבית לתקופה הנוכחית
       new_adj_i = adj_existing_i + adj_new_i
       target_adj_i_closing = adj_i_start + new_adj_i
 
@@ -692,7 +690,8 @@ def run_calculation_json(params_json):
           '3. מנוע ההצמדה למדד (CPI):',
           'ההצמדה מחושבת על בסיס מדד המחירים לצרכן הידוע. הצמדת הקרן מחושבת'
           ' מיום הבסיס/הסילוק האחרון. הצמדת הריבית מורכבת מהצמדת יתרת הפתיחה'
-          ' של הריבית + הצמדת הריבית שנצברה לתקופה מיום הבסיס.',
+          ' של הריבית והצמדתה מהמדד הקודם + הצמדת הריבית שנצברה לתקופה מיום'
+          ' הבסיס.',
       ),
       (
           '4. משיכות יתר (Overdraft):',
