@@ -386,20 +386,22 @@ def run_calculation_json(params_json):
       new_i = t['p'] * (((1.0 + r_daily) ** days) - 1.0)
       closing_i_unadjusted = i_start + new_i
 
-      # ב. הצמדת הקרן מיום בסיס השכבה (base_idx)
+      # ב. הצמדת הקרן מיום בסיס הקרן של השכבה (base_idx) - ללא שינוי
       base_idx = t['base_idx']
       cum_idx_factor = (idx / base_idx) - 1.0 if base_idx > 0 else 0.0
       target_adj_p_closing = t['p'] * cum_idx_factor
       new_adj_p = target_adj_p_closing - t['adj_p']
 
-      # ג. הצמדת הריבית מופרדת במדויק:
-      # 1) יתרת הפתיחה של הריבית + יתרת הפתיחה של הצמדת הריבית מיוחסות למדד הקודם (last_idx) לזה הנוכחי (idx)
+      # ג. הצמדת הריבית במדויק:
+      # 1) יתרת הפתיחה של הריבית + הצמדתה מוצמדים מהמדד הקודם (last_idx) לזה הנוכחי (idx)
       prev_idx = t['last_idx']
       period_idx_factor = (idx / prev_idx) - 1.0 if prev_idx > 0 else 0.0
       adj_existing_i = (i_start + adj_i_start) * period_idx_factor
 
-      # 2) הריבית החדשה שנצברה בתקופה (new_i) מוצמדת ממדד הבסיס של השכבה (base_idx) למדד הנוכחי (idx)
-      adj_new_i = new_i * cum_idx_factor
+      # 2) הריבית החדשה שנצברה בתקופה (new_i) מוצמדת ממדד הבסיס המקורי של השכבה (original_base_idx) לזה הנוכחי (idx)
+      orig_base_idx = t['original_base_idx']
+      cum_idx_factor_orig = (idx / orig_base_idx) - 1.0 if orig_base_idx > 0 else 0.0
+      adj_new_i = new_i * cum_idx_factor_orig
 
       # סך צבירת הפרשי ההצמדה לריבית לתקופה הנוכחית
       new_adj_i = adj_existing_i + adj_new_i
@@ -463,7 +465,7 @@ def run_calculation_json(params_json):
 
             if row['pay_p'] > 0:
               t['p'] -= row['pay_p']
-              t['base_idx'] = idx
+              t['base_idx'] = idx  # מעדכן את מדד הבסיס של הקרן בלבד
 
             r_dict['קרן יתרת סגירה'] = t['p']
             t['last_idx'] = idx
@@ -478,7 +480,8 @@ def run_calculation_json(params_json):
               'i': 0.0,
               'adj_p': 0.0,
               'adj_i': 0.0,
-              'base_idx': idx,
+              'original_base_idx': idx,  # מדד הבסיס המקורי לריבית (קבוע)
+              'base_idx': idx,           # מדד הבסיס לקרן (מתעדכן בסילוק)
               'last_dt': dt,
               'last_idx': idx,
               'rows': [{
@@ -529,7 +532,7 @@ def run_calculation_json(params_json):
 
             if row['pay_p'] > 0:
               t['p'] += row['pay_p']
-              t['base_idx'] = idx
+              t['base_idx'] = idx  # מעדכן את מדד הבסיס של הקרן בלבד
 
             r_dict['קרן יתרת סגירה'] = t['p']
             t['last_idx'] = idx
@@ -544,7 +547,8 @@ def run_calculation_json(params_json):
               'i': 0.0,
               'adj_p': 0.0,
               'adj_i': 0.0,
-              'base_idx': idx,
+              'original_base_idx': idx,  # מדד הבסיס המקורי לריבית (קבוע)
+              'base_idx': idx,           # מדד הבסיס לקרן (מתעדכן בסילוק)
               'last_dt': dt,
               'last_idx': idx,
               'rows': [{
@@ -691,7 +695,7 @@ def run_calculation_json(params_json):
           'ההצמדה מחושבת על בסיס מדד המחירים לצרכן הידוע. הצמדת הקרן מחושבת'
           ' מיום הבסיס/הסילוק האחרון. הצמדת הריבית מורכבת מהצמדת יתרת הפתיחה'
           ' של הריבית והצמדתה מהמדד הקודם + הצמדת הריבית שנצברה לתקופה מיום'
-          ' הבסיס.',
+          ' הבסיס המקורי של השכבה.',
       ),
       (
           '4. משיכות יתר (Overdraft):',
